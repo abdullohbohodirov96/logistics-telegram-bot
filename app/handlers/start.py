@@ -10,10 +10,10 @@ router = Router()
 async def start_cmd(message: Message):
     is_admin = message.from_user.id in ADMIN_IDS
     text = (
-        "Assalomu alaykum!\n"
-        "Bu logistika nazorat boti.\n\n"
-        "Sizga biriktirilgan yetkazib berish vazifalari shu yerga keladi.\n"
-        "Kerakli tugmani tanlang:"
+        "Assalomu alaykum! 👋\n"
+        "Men Dunyabunya logistika nazorat botiman.\n\n"
+        "Bu yerda sizga biriktirilgan yetkazib berish vazifalarini qabul qilasiz, yuk ortish bosqichlarini belgilaysiz, rasm va lokatsiya yuborasiz.\n\n"
+        "Kerakli bo'limni tanlang:"
     )
     await message.answer(text, reply_markup=kb.get_main_menu_kb(is_admin))
 
