@@ -18,5 +18,7 @@ services:
         sync: false
       - key: GROUP_CHAT_ID
         sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: POLL_INTERVAL_SECONDS
         value: "60"
