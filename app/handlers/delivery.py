@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 import pytz
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
 from app.config import TIMEZONE, GROUP_CHAT_ID
@@ -32,64 +32,67 @@ async def update_group_message(bot: Bot, order_id: str):
 
     steps = get_order_steps(order_id)
     
-    # Determine status
-    status_text = "📦 Yuk ortilmoqda"
-    if steps:
-        last_step = steps[-1].get('step_name')
-        if last_step == 'finish':
-            status_text = "✅ Yetkazib berish yakunlandi"
-        elif last_step == 'photo_obj':
-            status_text = "📍 Manzilda"
-        elif last_step == 'location':
-            status_text = "📍 Lokatsiya yuborildi"
-        elif last_step == 'arrived':
-            status_text = "📍 Manzilga yetib keldi"
-        elif last_step == 'start_drive':
-            status_text = "🚚 Yo‘lga chiqdi"
-        elif last_step == 'photo_load':
-            status_text = "📦 Yuklangan"
-
-    text = f"🚚 Yetkazib berish #{order_id}\n\n"
+    start_time = "Noma'lum"
+    end_time = "Noma'lum"
+    last_step_text = ""
+    loc_lat = None
+    loc_lng = None
+    photo_load = "yo'q"
+    photo_obj = "yo'q"
+    
+    is_done = order.get('current_status') == 'DONE'
+    
+    for s in steps:
+        name = s['step_name']
+        t = s.get('time_text', '')
+        if name == 'take_delivery':
+            start_time = t
+            last_step_text = f"Vazifani oldi — {t}"
+        elif name.startswith('zone_'):
+            z = name.split('_')[1]
+            last_step_text = f"{z}-blok {'oldi' if s.get('step_value') == 'y' else 'olmadi'} — {t}"
+        elif name == 'photo_load':
+            photo_load = "bor"
+            last_step_text = f"Yuklangan rasm yuborildi — {t}"
+        elif name == 'start_drive':
+            last_step_text = f"Yo‘lga chiqdi — {t}"
+        elif name == 'arrived':
+            last_step_text = f"Manzilga yetdi — {t}"
+        elif name == 'location':
+            loc_lat = s.get('location_lat')
+            loc_lng = s.get('location_lng')
+            last_step_text = f"Lokatsiya yuborildi — {t}"
+        elif name == 'photo_obj':
+            photo_obj = "bor"
+            last_step_text = f"Manzildagi rasm yuborildi — {t}"
+        elif name == 'finish':
+            end_time = t
+            is_done = True
+            
+    text = f"🚚 Yetkazib berish #{order_id}\n"
     text += f"Haydovchi: {order['driver_name']}\n"
-    text += f"Telegram ID: {order['driver_telegram_id']}\n"
     text += f"Mashina: {order['car_number']}\n"
     text += f"Manzil: {order['address']}\n"
-    text += f"Yuk: {order['cargo']}\n"
-    if order.get('comment'):
-        text += f"Izoh: {order['comment']}\n"
-    
-    text += f"\nHolat: {status_text}\n\n"
+    text += f"Yuk: {order['cargo']}\n\n"
 
-    for step in steps:
-        name = step['step_name']
-        val = step.get('step_value', '')
-        t = step.get('time_text', '')
-        
-        if name == 'take_delivery':
-            text += f"✅ Yetkazib berishni oldi — {t}\n"
-        elif name.startswith('zone_'):
-            zone_letter = name.split('_')[1]
-            sign = "✅" if val == 'y' else "❌"
-            action = "oldi" if val == 'y' else "olmadi"
-            text += f"{sign} {zone_letter} zona: {action} — {t}\n"
-        elif name == 'photo_load':
-            text += f"📸 Yuklangan rasm — {t}\n"
-        elif name == 'start_drive':
-            text += f"🚚 Yo‘lga chiqdi — {t}\n"
-        elif name == 'arrived':
-            text += f"📍 Manzilga yetib keldi — {t}\n"
-        elif name == 'location':
-            text += f"📍 Lokatsiya yuborildi — {t}\n"
-        elif name == 'photo_obj':
-            text += f"📸 Manzildagi rasm — {t}\n"
-        elif name == 'finish':
-            text += f"✅ Yetkazib berish yakunlandi — {t}\n"
+    if is_done:
+        text += f"Holat: ✅ Yakunlandi\n"
+        text += f"Oldi: {start_time}\n"
+        text += f"Yetkazdi: {end_time}\n"
+        if loc_lat and loc_lng:
+            text += f"Lokatsiya: https://maps.google.com/?q={loc_lat},{loc_lng}\n"
+        text += f"\nRasmlar:\n📸 Yuklangan rasm: {photo_load}\n📸 Manzildagi rasm: {photo_obj}\n"
+    else:
+        text += f"Holat: 🚚 Yo‘lda\n"
+        text += f"Oldi: {start_time}\n"
+        text += f"Oxirgi bosqich: {last_step_text}\n"
 
     try:
         await bot.edit_message_text(
             chat_id=GROUP_CHAT_ID,
             message_id=order['group_message_id'],
-            text=text
+            text=text,
+            disable_web_page_preview=True
         )
     except Exception as e:
         logger.error(f"Error editing group message: {e}")
@@ -124,28 +127,28 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
         pass
 
     if should_send_to_group():
-        text = f"🚚 Yetkazib berish #{order_id}\n\n"
+        text = f"🚚 Yetkazib berish #{order_id}\n"
         text += f"Haydovchi: {order['driver_name']}\n"
-        text += f"Telegram ID: {order['driver_telegram_id']}\n"
         text += f"Mashina: {order['car_number']}\n"
         text += f"Manzil: {order['address']}\n"
-        text += f"Yuk: {order['cargo']}\n"
-        if order.get('comment'):
-            text += f"Izoh: {order['comment']}\n\n"
-        text += f"Holat: 📦 Yuk ortilmoqda\n\n"
-        text += f"✅ Yetkazib berishni oldi — {t}\n"
+        text += f"Yuk: {order['cargo']}\n\n"
+        text += f"Holat: 🚚 Yo‘lda\n"
+        text += f"Oldi: {t}\n"
+        text += f"Oxirgi bosqich: Vazifani oldi — {t}\n"
 
         try:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
             update_order(order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery'})
         except Exception as e:
             logger.error(f"Error sending to group: {e}")
+    else:
+        update_order(order_id, {'current_status': 'take_delivery'})
 
     await callback.message.edit_text("✅ Yetkazib berish qabul qilindi.")
-    await callback.message.answer("A zona bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
+    await callback.message.answer("A-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
     await callback.answer()
 
-ZONES = ["A", "B", "C", "D", "E"]
+ZONES = ["A", "B", "C", "D"]
 
 @router.callback_query(F.data.startswith("z_"))
 async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
@@ -165,12 +168,12 @@ async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await update_group_message(bot, order_id)
     
     action_text = "✅ Oldim" if val == 'y' else "❌ Olmadim"
-    await callback.message.edit_text(f"{zone} zona: {action_text}")
+    await callback.message.edit_text(f"{zone}-blok: {action_text}")
     
     current_index = ZONES.index(zone)
     if current_index + 1 < len(ZONES):
         next_zone = ZONES[current_index + 1]
-        await callback.message.answer(f"{next_zone} zona bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb(next_zone, order_id))
+        await callback.message.answer(f"{next_zone}-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb(next_zone, order_id))
     else:
         await state.update_data(order_id=order_id, message_id=callback.message.message_id)
         await state.set_state(DeliveryProcess.waiting_for_load_photo)
@@ -191,14 +194,6 @@ async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
         'time_text': t,
         'photo_file_id': photo_id
     })
-    
-    order = get_order(order_id)
-    if should_send_to_group():
-        caption = f"📸 Yuklangan rasm\nYetkazib berish #{order_id}\nHaydovchi: {order['driver_name']}\nVaqt: {t}"
-        try:
-            await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=photo_id, caption=caption)
-        except Exception as e:
-            logger.error(f"Error sending photo to group: {e}")
             
     await update_group_message(bot, order_id)
     
@@ -242,12 +237,6 @@ async def process_location(message: Message, state: FSMContext, bot: Bot):
         'location_lat': lat,
         'location_lng': lng
     })
-    
-    if should_send_to_group():
-        try:
-            await bot.send_location(chat_id=GROUP_CHAT_ID, latitude=lat, longitude=lng)
-        except Exception as e:
-            logger.error(f"Error sending location to group: {e}")
             
     await update_group_message(bot, order_id)
     
@@ -267,14 +256,6 @@ async def process_obj_photo(message: Message, state: FSMContext, bot: Bot):
         'time_text': t,
         'photo_file_id': photo_id
     })
-    
-    order = get_order(order_id)
-    if should_send_to_group():
-        caption = f"📸 Manzildagi rasm\nYetkazib berish #{order_id}\nHaydovchi: {order['driver_name']}\nVaqt: {t}"
-        try:
-            await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=photo_id, caption=caption)
-        except Exception as e:
-            logger.error(f"Error sending photo to group: {e}")
             
     await update_group_message(bot, order_id)
     
@@ -286,9 +267,25 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
     order_id = callback.data.split("finish_")[1]
     t = get_current_time()
     save_order_step({'order_id': order_id, 'step_name': 'finish', 'time_text': t})
+    update_order(order_id, {'current_status': 'DONE', 'completed_at': datetime.now(tz).isoformat()})
     await update_group_message(bot, order_id)
     await callback.message.edit_text(f"✅ Yetkazib berish #{order_id} muvaffaqiyatli yakunlandi ({t})!")
     await callback.answer()
+    
+    # Send MediaGroup to the channel if applicable
+    if should_send_to_group():
+        steps = get_order_steps(order_id)
+        photos = []
+        for s in steps:
+            if s['step_name'] in ['photo_load', 'photo_obj'] and s.get('photo_file_id'):
+                caption = "Yuklangan rasm" if s['step_name'] == 'photo_load' else "Manzildagi rasm"
+                photos.append(InputMediaPhoto(media=s['photo_file_id'], caption=f"{caption} (#{order_id})"))
+        
+        if photos:
+            try:
+                await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=photos)
+            except Exception as e:
+                logger.error(f"Error sending media group: {e}")
     
     from app.sheets import get_sheets_service
     from app.config import GOOGLE_SHEET_ID

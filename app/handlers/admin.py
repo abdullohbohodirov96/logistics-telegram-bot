@@ -9,7 +9,7 @@ from app.config import ADMIN_IDS, TIMEZONE
 from app.db import get_history, get_unique_cars, get_unique_drivers, get_active_orders
 import app.keyboards as kb
 from app.states import AdminProcess
-from app.handlers.history import format_delivery
+from app.handlers.history import format_delivery_short, format_delivery_detailed
 
 router = Router()
 tz = pytz.timezone(TIMEZONE)
@@ -138,6 +138,7 @@ async def show_history_results(message: Message, filter_type, filter_val, date_f
     total_pages = (len(history) + 4) // 5
     start_idx = (page - 1) * 5
     end_idx = start_idx + 5
+    items = history[start_idx:end_idx]
     
     title = ""
     if filter_type == 'car': title = f"🚗 {filter_val} tarixi\n"
@@ -148,14 +149,14 @@ async def show_history_results(message: Message, filter_type, filter_val, date_f
     d2 = datetime.fromisoformat(date_to).strftime('%d.%m.%Y') if date_to else ""
     
     text = f"{title}📅 {d1} - {d2}\n\n"
-    for order in history[start_idx:end_idx]:
-        text += format_delivery(order) + "\n----------------\n"
+    for order in items:
+        text += format_delivery_short(order) + "\n----------------\n"
         
     cb_prefix = f"pg_{filter_type}_{filter_val}_{date_from}_{date_to}"
     if edit:
-        await message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix))
+        await message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix, items))
     else:
-        await message.answer(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix))
+        await message.answer(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix, items))
 
 @router.callback_query(F.data.startswith("pg_"))
 async def paginate_admin_history(callback: CallbackQuery):
@@ -176,9 +177,12 @@ async def show_active(callback: CallbackQuery):
         await callback.message.edit_text("Aktiv vazifalar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
         
+    page = 1
+    total_pages = (len(active) + 4) // 5
+    items = active[:5]
     text = "📊 Aktiv vazifalar:\n\n"
-    for order in active[:5]:
-        text += format_delivery(order) + "\n----------------\n"
+    for order in items:
+        text += format_delivery_short(order) + "\n----------------\n"
         
-    await callback.message.edit_text(text, reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+    await callback.message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, "pg_all_0_none_none", items))
     await callback.answer()

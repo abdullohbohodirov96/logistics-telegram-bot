@@ -1,31 +1,72 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from app.db import get_history, get_order_steps
+from app.db import get_history, get_order, get_order_steps
 import app.keyboards as kb
 
 router = Router()
 
-def format_delivery(order):
+def format_delivery_short(order):
     steps = get_order_steps(order['order_id'])
-    text = f"1) #{order['order_id']}\n"
-    text += f"Haydovchi: {order['driver_name']}\n"
-    text += f"Manzil: {order['address']}\n"
-    text += f"Yuk: {order['cargo']}\n"
-    
-    start_time = ""
-    end_time = ""
+    start_time = "Noma'lum"
+    end_time = "Noma'lum"
     for s in steps:
         if s['step_name'] == 'take_delivery':
             start_time = s['time_text']
         if s['step_name'] == 'finish':
             end_time = s['time_text']
             
+    status = "✅ Yakunlandi" if order.get('current_status') == 'DONE' else "🚚 Davom etmoqda"
+    
+    text = f"#{order['order_id']} | {order['car_number']}\n"
+    text += f"Manzil: {order['address']}\n"
+    text += f"Yuk: {order['cargo']}\n"
+    text += f"Oldi: {start_time}\n"
+    text += f"Yetkazdi: {end_time}\n"
+    text += f"Holat: {status}\n"
+    return text
+
+def format_delivery_detailed(order):
+    steps = get_order_steps(order['order_id'])
+    
+    text = f"📦 Buyurtma: #{order['order_id']}\n"
+    text += f"Haydovchi: {order['driver_name']} (ID: {order['driver_telegram_id']})\n"
+    text += f"Mashina: {order['car_number']}\n"
+    text += f"Manzil: {order['address']}\n"
+    text += f"Yuk: {order['cargo']}\n"
+    if order.get('comment'):
+        text += f"Izoh: {order['comment']}\n"
+        
+    start_time = ""
+    end_time = ""
+    loc_lat = None
+    loc_lng = None
+    photo_load = "Yo'q"
+    photo_obj = "Yo'q"
+    
+    for s in steps:
+        if s['step_name'] == 'take_delivery':
+            start_time = s['time_text']
+        elif s['step_name'] == 'finish':
+            end_time = s['time_text']
+        elif s['step_name'] == 'location':
+            loc_lat = s.get('location_lat')
+            loc_lng = s.get('location_lng')
+        elif s['step_name'] == 'photo_load':
+            photo_load = "Bor"
+        elif s['step_name'] == 'photo_obj':
+            photo_obj = "Bor"
+            
+    status = "✅ Yakunlandi" if order.get('current_status') == 'DONE' else "🚚 Davom etmoqda"
+    text += f"\nHolat: {status}\n"
     if start_time: text += f"Boshlangan: {start_time}\n"
     if end_time: text += f"Tugagan: {end_time}\n"
     
-    status = "DONE" if order.get('current_status') == 'DONE' else order.get('current_status', 'IN_PROGRESS')
-    text += f"Holat: {status}\n\nBosqichlar:\n"
+    if loc_lat and loc_lng:
+        text += f"Lokatsiya: https://maps.google.com/?q={loc_lat},{loc_lng}\n"
+        
+    text += f"\nRasmlar:\n📸 Yuklangan rasm: {photo_load}\n📸 Manzildagi rasm: {photo_obj}\n"
     
+    text += f"\nBosqichlar:\n"
     for step in steps:
         name = step['step_name']
         val = step.get('step_value', '')
@@ -37,7 +78,7 @@ def format_delivery(order):
             zone_letter = name.split('_')[1]
             sign = "✅" if val == 'y' else "❌"
             action = "oldi" if val == 'y' else "olmadi"
-            text += f"{sign} {zone_letter} zona: {action} — {t}\n"
+            text += f"{sign} {zone_letter}-blok: {action} — {t}\n"
         elif name == 'photo_load':
             text += f"📸 Yuklangan rasm — {t}\n"
         elif name == 'start_drive':
@@ -63,12 +104,13 @@ async def my_history(message: Message):
         
     page = 1
     total_pages = (len(history) + 4) // 5
+    items = history[:5]
     
     text = "📋 Mening tarixim:\n\n"
-    for order in history[:5]:
-        text += format_delivery(order) + "\n----------------\n"
+    for order in items:
+        text += format_delivery_short(order) + "\n----------------\n"
         
-    await message.answer(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages))
+    await message.answer(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages, items))
 
 @router.callback_query(F.data.startswith("myhist_"))
 async def paginate_my_history(callback: CallbackQuery):
@@ -79,10 +121,25 @@ async def paginate_my_history(callback: CallbackQuery):
     total_pages = (len(history) + 4) // 5
     start_idx = (page - 1) * 5
     end_idx = start_idx + 5
+    items = history[start_idx:end_idx]
     
     text = "📋 Mening tarixim:\n\n"
-    for order in history[start_idx:end_idx]:
-        text += format_delivery(order) + "\n----------------\n"
+    for order in items:
+        text += format_delivery_short(order) + "\n----------------\n"
         
-    await callback.message.edit_text(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages))
+    await callback.message.edit_text(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages, items))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("det_"))
+async def show_delivery_details(callback: CallbackQuery):
+    order_id = callback.data.split("det_")[1]
+    order = get_order(order_id)
+    if not order:
+        await callback.answer("Buyurtma topilmadi.", show_alert=True)
+        return
+        
+    text = format_delivery_detailed(order)
+    # Give a simple 'Orqaga' button that simply deletes this message to reveal the list underneath
+    # Or actually, the user wants it to just pop up. A new message is better.
+    await callback.message.answer(text)
     await callback.answer()

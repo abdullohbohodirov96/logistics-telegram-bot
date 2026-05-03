@@ -43,24 +43,40 @@ def get_date_range_kb(filter_type: str, filter_val: str):
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]
     ])
 
-def get_pagination_kb(page: int, total_pages: int, callback_prefix: str):
+def get_pagination_kb(page: int, total_pages: int, callback_prefix: str, items: list = None):
+    kb = []
+    if items:
+        for item in items:
+            order_id = item['order_id']
+            kb.append([InlineKeyboardButton(text=f"🔎 Batafsil #{order_id}", callback_data=f"det_{order_id}")])
+            
     buttons = []
     if page > 1:
         buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{callback_prefix}_{page-1}"))
     if page < total_pages:
         buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"{callback_prefix}_{page+1}"))
     
-    kb = [buttons] if buttons else []
+    if buttons:
+        kb.append(buttons)
     kb.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def get_driver_pagination_kb(page: int, total_pages: int):
+def get_driver_pagination_kb(page: int, total_pages: int, items: list = None):
+    kb = []
+    if items:
+        for item in items:
+            order_id = item['order_id']
+            kb.append([InlineKeyboardButton(text=f"🔎 Batafsil #{order_id}", callback_data=f"det_{order_id}")])
+            
     buttons = []
     if page > 1:
         buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"myhist_{page-1}"))
     if page < total_pages:
         buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"myhist_{page+1}"))
-    return InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+        
+    if buttons:
+        kb.append(buttons)
+    return InlineKeyboardMarkup(inline_keyboard=kb) if kb else None
 
 def get_take_delivery_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[

@@ -7,14 +7,16 @@ Logistika va yetkazib berishlarni nazorat qilish uchun Telegram-bot. Google Shee
 - Haydovchini topib, unga shaxsiy xabar (PM) yuboradi.
 - Bosqichma-bosqich jarayon: 
   - Buyurtmani olish
-  - Ombor zonalari (A, B, C, D, E) bo'yicha yukni qabul qilish.
+  - Ombor bloklari (A, B, C, D) bo'yicha yukni qabul qilish.
   - Mashinaga yuklangan rasm.
   - Yo'lga chiqish.
   - Manzilga yetib borish va lokatsiya yuborish.
   - Manzildagi holat rasmi.
   - Yetkazib berishni yakunlash.
-- Har bir bosqich vaqt bilan birga guruh/kanal dagi bitta xabarda yangilanib boradi.
+- Har bir bosqich guruh/kanal dagi bitta xabarda yangilanib boradi.
+- Jarayon tugagach kanalga rasmlar va Google Maps lokatsiyasi tushadi.
 - Holatlar avtomatik ravishda Sheets'da (SENT, IN_PROGRESS, DONE) va Supabase'da saqlanadi.
+- Keng qamrovli tarix (Admin panel va Haydovchi uchun).
 
 ## Talablar
 - Python 3.11+
