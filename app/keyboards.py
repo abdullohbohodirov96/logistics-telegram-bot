@@ -41,37 +41,32 @@ def get_date_range_kb():
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]
     ])
 
-def get_pagination_kb(page: int, total_pages: int, items: list = None):
-    kb = []
-    if items:
-        for item in items:
-            order_id = item['order_id']
-            kb.append([InlineKeyboardButton(text=f"🔎 Batafsil #{order_id}", callback_data=f"det_{order_id}")])
-            
+def get_order_detail_kb(order_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Batafsil", callback_data=f"detail:{order_id}")]
+    ])
+
+def get_pagination_kb(page: int, total_pages: int):
     buttons = []
     if page > 1:
-        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"apg_{page-1}"))
+        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"h:p:{page-1}"))
     if page < total_pages:
-        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"apg_{page+1}"))
+        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"h:n:{page+1}"))
     
+    kb = []
     if buttons:
         kb.append(buttons)
     kb.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def get_driver_pagination_kb(page: int, total_pages: int, items: list = None):
-    kb = []
-    if items:
-        for item in items:
-            order_id = item['order_id']
-            kb.append([InlineKeyboardButton(text=f"🔎 Batafsil #{order_id}", callback_data=f"det_{order_id}")])
-            
+def get_driver_pagination_kb(page: int, total_pages: int):
     buttons = []
     if page > 1:
-        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"dpg_{page-1}"))
+        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"m:p:{page-1}"))
     if page < total_pages:
-        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"dpg_{page+1}"))
+        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"m:n:{page+1}"))
         
+    kb = []
     if buttons:
         kb.append(buttons)
     return InlineKeyboardMarkup(inline_keyboard=kb) if kb else None

@@ -151,19 +151,23 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
     d1 = datetime.fromisoformat(date_from).strftime('%d.%m.%Y') if date_from else ""
     d2 = datetime.fromisoformat(date_to).strftime('%d.%m.%Y') if date_to else ""
     
-    text = f"{title}📅 {d1} - {d2}\n\n"
-    for order in items:
-        text += format_delivery_short(order) + "\n----------------\n"
-        
     if edit:
-        await message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
-    else:
-        await message.answer(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
+        await message.delete()
+        
+    await message.answer(f"{title}📅 {d1} - {d2}")
+    
+    for order in items:
+        text = format_delivery_short(order)
+        await message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
+        
+    if total_pages > 1:
+        await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
 
-@router.callback_query(F.data.startswith("apg_"))
+@router.callback_query(F.data.startswith("h:p:") | F.data.startswith("h:n:"))
 async def paginate_admin_history(callback: CallbackQuery, state: FSMContext):
-    page = int(callback.data.split("_")[1])
-    await show_history_results(callback.message, state, page)
+    action, page_str = callback.data.split(":")[1:]
+    page = int(page_str)
+    await show_history_results(callback.message, state, page, edit=True)
     await callback.answer()
 
 @router.callback_query(F.data == "adm_active")
@@ -176,9 +180,14 @@ async def show_active(callback: CallbackQuery):
     page = 1
     total_pages = (len(active) + 4) // 5
     items = active[:5]
-    text = "📊 Aktiv vazifalar:\n\n"
+    
+    await callback.message.delete()
+    await callback.message.answer("📊 Aktiv vazifalar:")
+    
     for order in items:
-        text += format_delivery_short(order) + "\n----------------\n"
+        text = format_delivery_short(order)
+        await callback.message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
-    await callback.message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
+    if total_pages > 1:
+        await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
     await callback.answer()

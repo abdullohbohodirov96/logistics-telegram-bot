@@ -106,15 +106,19 @@ async def my_history(message: Message):
     total_pages = (len(history) + 4) // 5
     items = history[:5]
     
-    text = "📋 Mening tarixim:\n\n"
+    await message.answer("📋 Mening tarixim:")
     for order in items:
-        text += format_delivery_short(order) + "\n----------------\n"
+        text = format_delivery_short(order)
+        await message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
-    await message.answer(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages, items))
+    if total_pages > 1:
+        await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
 
-@router.callback_query(F.data.startswith("dpg_"))
+@router.callback_query(F.data.startswith("m:p:") | F.data.startswith("m:n:"))
 async def paginate_my_history(callback: CallbackQuery):
-    page = int(callback.data.split("_")[1])
+    action, page_str = callback.data.split(":")[1:]
+    page = int(page_str)
+    
     tid = callback.from_user.id
     history = get_history('driver', str(tid))
     
@@ -123,16 +127,18 @@ async def paginate_my_history(callback: CallbackQuery):
     end_idx = start_idx + 5
     items = history[start_idx:end_idx]
     
-    text = "📋 Mening tarixim:\n\n"
+    await callback.message.delete()
+    
     for order in items:
-        text += format_delivery_short(order) + "\n----------------\n"
+        text = format_delivery_short(order)
+        await callback.message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
-    await callback.message.edit_text(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages, items))
+    await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("det_"))
+@router.callback_query(F.data.startswith("detail:"))
 async def show_delivery_details(callback: CallbackQuery):
-    order_id = callback.data.split("det_")[1]
+    order_id = callback.data.split("detail:")[1]
     order = get_order(order_id)
     if not order:
         await callback.answer("Buyurtma topilmadi.", show_alert=True)
