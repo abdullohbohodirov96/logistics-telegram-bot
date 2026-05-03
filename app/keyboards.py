@@ -20,30 +20,28 @@ def get_admin_panel_kb():
 def get_cars_kb(cars: list):
     kb = []
     for car in cars:
-        kb.append([InlineKeyboardButton(text=f"🚗 {car}", callback_data=f"sel_car_{car}")])
+        kb.append([InlineKeyboardButton(text=f"🚗 {car}", callback_data=f"car_{car}")])
     kb.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def get_drivers_kb(drivers: dict):
     kb = []
     for tid, name in drivers.items():
-        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"sel_drv_{tid}")])
+        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"drv_{tid}")])
     kb.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def get_date_range_kb(filter_type: str, filter_val: str):
-    # filter_type: all, car, drv
-    prefix = f"dt_{filter_type}_{filter_val}"
+def get_date_range_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Bugun", callback_data=f"{prefix}_today")],
-        [InlineKeyboardButton(text="Kecha", callback_data=f"{prefix}_yesterday")],
-        [InlineKeyboardButton(text="Oxirgi 7 kun", callback_data=f"{prefix}_7days")],
-        [InlineKeyboardButton(text="Oxirgi 30 kun", callback_data=f"{prefix}_30days")],
-        [InlineKeyboardButton(text="Sana oralig'ini kiritish", callback_data=f"{prefix}_manual")],
+        [InlineKeyboardButton(text="Bugun", callback_data="dt_today")],
+        [InlineKeyboardButton(text="Kecha", callback_data="dt_yesterday")],
+        [InlineKeyboardButton(text="Oxirgi 7 kun", callback_data="dt_7days")],
+        [InlineKeyboardButton(text="Oxirgi 30 kun", callback_data="dt_30days")],
+        [InlineKeyboardButton(text="Sana oralig'ini kiritish", callback_data="dt_manual")],
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]
     ])
 
-def get_pagination_kb(page: int, total_pages: int, callback_prefix: str, items: list = None):
+def get_pagination_kb(page: int, total_pages: int, items: list = None):
     kb = []
     if items:
         for item in items:
@@ -52,9 +50,9 @@ def get_pagination_kb(page: int, total_pages: int, callback_prefix: str, items: 
             
     buttons = []
     if page > 1:
-        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{callback_prefix}_{page-1}"))
+        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"apg_{page-1}"))
     if page < total_pages:
-        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"{callback_prefix}_{page+1}"))
+        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"apg_{page+1}"))
     
     if buttons:
         kb.append(buttons)
@@ -70,9 +68,9 @@ def get_driver_pagination_kb(page: int, total_pages: int, items: list = None):
             
     buttons = []
     if page > 1:
-        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"myhist_{page-1}"))
+        buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"dpg_{page-1}"))
     if page < total_pages:
-        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"myhist_{page+1}"))
+        buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"dpg_{page+1}"))
         
     if buttons:
         kb.append(buttons)

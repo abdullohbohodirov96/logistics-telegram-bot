@@ -50,28 +50,28 @@ async def show_drivers(callback: CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "adm_hist_all")
-async def show_all_history_date(callback: CallbackQuery):
-    await callback.message.edit_text("Sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb('all', '0'))
+async def show_all_history_date(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(filter_type='all', filter_val='0')
+    await callback.message.edit_text("Sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
     await callback.answer()
 
-@router.callback_query(F.data.startswith("sel_car_"))
-async def select_car_date(callback: CallbackQuery):
-    car = callback.data.split("sel_car_")[1]
-    await callback.message.edit_text(f"🚗 {car} mashinasi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb('car', car))
+@router.callback_query(F.data.startswith("car_"))
+async def select_car_date(callback: CallbackQuery, state: FSMContext):
+    car = callback.data.split("car_")[1]
+    await state.update_data(filter_type='car', filter_val=car)
+    await callback.message.edit_text(f"🚗 {car} mashinasi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
     await callback.answer()
 
-@router.callback_query(F.data.startswith("sel_drv_"))
-async def select_drv_date(callback: CallbackQuery):
-    tid = callback.data.split("sel_drv_")[1]
-    await callback.message.edit_text(f"👤 Haydovchi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb('drv', tid))
+@router.callback_query(F.data.startswith("drv_"))
+async def select_drv_date(callback: CallbackQuery, state: FSMContext):
+    tid = callback.data.split("drv_")[1]
+    await state.update_data(filter_type='drv', filter_val=tid)
+    await callback.message.edit_text(f"👤 Haydovchi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("dt_"))
 async def handle_date_range(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.split("_")
-    filter_type = parts[1]
-    filter_val = parts[2]
-    range_type = parts[3]
+    range_type = callback.data.split("dt_")[1]
     
     now = datetime.now(tz)
     date_from = None
@@ -91,13 +91,13 @@ async def handle_date_range(callback: CallbackQuery, state: FSMContext):
         date_from = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         date_to = now.replace(hour=23, minute=59, second=59).isoformat()
     elif range_type == 'manual':
-        await state.update_data(filter_type=filter_type, filter_val=filter_val)
         await state.set_state(AdminProcess.waiting_for_manual_date)
         await callback.message.edit_text("Iltimos, sanani quyidagi formatda kiriting:\n\n`03.05.2026 - 05.05.2026`", parse_mode="Markdown")
         await callback.answer()
         return
         
-    await show_history_results(callback.message, filter_type, filter_val, date_from, date_to, 1)
+    await state.update_data(date_from=date_from, date_to=date_to)
+    await show_history_results(callback.message, state, 1)
     await callback.answer()
 
 @router.message(AdminProcess.waiting_for_manual_date, F.text)
@@ -114,21 +114,24 @@ async def process_manual_date(message: Message, state: FSMContext):
         date_from = start_date.isoformat()
         date_to = end_date.isoformat()
         
-        data = await state.get_data()
-        filter_type = data.get('filter_type')
-        filter_val = data.get('filter_val')
-        
-        await show_history_results(message, filter_type, filter_val, date_from, date_to, 1, edit=False)
-        await state.clear()
+        await state.update_data(date_from=date_from, date_to=date_to)
+        await show_history_results(message, state, 1, edit=False)
+        await state.set_state(None)
     except Exception as e:
         await message.answer("Noto'g'ri format. Iltimos, qaytadan urinib ko'ring:\n`03.05.2026 - 05.05.2026`", parse_mode="Markdown")
 
-async def show_history_results(message: Message, filter_type, filter_val, date_from, date_to, page, edit=True):
+async def show_history_results(message: Message, state: FSMContext, page: int, edit=True):
+    data = await state.get_data()
+    filter_type = data.get('filter_type', 'all')
+    filter_val = data.get('filter_val', '0')
+    date_from = data.get('date_from')
+    date_to = data.get('date_to')
+    
     history = get_history(filter_type, filter_val if filter_type != 'all' else None, date_from, date_to)
     
     if not history:
         text = "Ushbu oraliqda ma'lumot topilmadi."
-        kb_markup = kb.get_pagination_kb(1, 1, f"pg_{filter_type}_{filter_val}_{date_from}_{date_to}")
+        kb_markup = kb.get_pagination_kb(1, 1)
         if edit:
             await message.edit_text(text, reply_markup=kb_markup)
         else:
@@ -152,22 +155,15 @@ async def show_history_results(message: Message, filter_type, filter_val, date_f
     for order in items:
         text += format_delivery_short(order) + "\n----------------\n"
         
-    cb_prefix = f"pg_{filter_type}_{filter_val}_{date_from}_{date_to}"
     if edit:
-        await message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix, items))
+        await message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
     else:
-        await message.answer(text, reply_markup=kb.get_pagination_kb(page, total_pages, cb_prefix, items))
+        await message.answer(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
 
-@router.callback_query(F.data.startswith("pg_"))
-async def paginate_admin_history(callback: CallbackQuery):
-    parts = callback.data.split("_")
-    filter_type = parts[1]
-    filter_val = parts[2]
-    date_from = parts[3]
-    date_to = parts[4]
-    page = int(parts[5])
-    
-    await show_history_results(callback.message, filter_type, filter_val, date_from, date_to, page)
+@router.callback_query(F.data.startswith("apg_"))
+async def paginate_admin_history(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[1])
+    await show_history_results(callback.message, state, page)
     await callback.answer()
 
 @router.callback_query(F.data == "adm_active")
@@ -184,5 +180,5 @@ async def show_active(callback: CallbackQuery):
     for order in items:
         text += format_delivery_short(order) + "\n----------------\n"
         
-    await callback.message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, "pg_all_0_none_none", items))
+    await callback.message.edit_text(text, reply_markup=kb.get_pagination_kb(page, total_pages, items))
     await callback.answer()

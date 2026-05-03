@@ -112,7 +112,7 @@ async def my_history(message: Message):
         
     await message.answer(text, reply_markup=kb.get_driver_pagination_kb(page, total_pages, items))
 
-@router.callback_query(F.data.startswith("myhist_"))
+@router.callback_query(F.data.startswith("dpg_"))
 async def paginate_my_history(callback: CallbackQuery):
     page = int(callback.data.split("_")[1])
     tid = callback.from_user.id
@@ -139,7 +139,5 @@ async def show_delivery_details(callback: CallbackQuery):
         return
         
     text = format_delivery_detailed(order)
-    # Give a simple 'Orqaga' button that simply deletes this message to reveal the list underneath
-    # Or actually, the user wants it to just pop up. A new message is better.
     await callback.message.answer(text)
     await callback.answer()
