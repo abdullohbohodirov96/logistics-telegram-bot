@@ -39,12 +39,12 @@ async def check_sheets_job(bot: Bot):
             
             created = create_order(db_order_data)
             if created:
-                text = f"🚚 Новая доставка #{order['order_id']}\n"
-                text += f"Машина: {car_number}\n"
-                text += f"Адрес: {order['address']}\n"
-                text += f"Груз: {order['cargo']}\n"
+                text = f"🚚 Yangi yetkazib berish #{order['order_id']}\n"
+                text += f"Mashina: {car_number}\n"
+                text += f"Manzil: {order['address']}\n"
+                text += f"Yuk: {order['cargo']}\n"
                 if order.get('comment'):
-                    text += f"Комментарий: {order['comment']}\n"
+                    text += f"Izoh: {order['comment']}\n"
                     
                 try:
                     await bot.send_message(
