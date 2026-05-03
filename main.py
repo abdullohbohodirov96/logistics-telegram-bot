@@ -27,6 +27,9 @@ async def main():
     scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
     scheduler.start()
 
+    logger.info("Deleting old webhook if exists...")
+    await bot.delete_webhook(drop_pending_updates=True)
+
     logger.info("Bot started and scheduler is running.")
     try:
         await dp.start_polling(bot)
