@@ -9,13 +9,20 @@ def format_delivery_short(order):
     steps = get_order_steps(order['order_id'])
     start_time = "Noma'lum"
     end_time = "Noma'lum"
+    has_finish_step = False
     for s in steps:
         if s['step_name'] == 'take_delivery':
             start_time = s['time_text']
         if s['step_name'] == 'finish':
             end_time = s['time_text']
+            has_finish_step = True
             
-    status = "✅ Yakunlandi" if order.get('current_status') == 'DONE' else "🚚 Davom etmoqda"
+    is_done = (
+        order.get('current_status') == 'DONE' or 
+        order.get('completed_at') is not None or 
+        has_finish_step
+    )
+    status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
     
     text = f"#{order['order_id']} | {order['car_number']}\n"
     text += f"Manzil: {order['address']}\n"
@@ -42,12 +49,14 @@ def format_delivery_detailed(order):
     loc_lng = None
     photo_load = "Yo'q"
     photo_obj = "Yo'q"
+    has_finish_step = False
     
     for s in steps:
         if s['step_name'] == 'take_delivery':
             start_time = s['time_text']
         elif s['step_name'] == 'finish':
             end_time = s['time_text']
+            has_finish_step = True
         elif s['step_name'] == 'location':
             loc_lat = s.get('location_lat')
             loc_lng = s.get('location_lng')
@@ -56,7 +65,12 @@ def format_delivery_detailed(order):
         elif s['step_name'] == 'photo_obj':
             photo_obj = "Bor"
             
-    status = "✅ Yakunlandi" if order.get('current_status') == 'DONE' else "🚚 Davom etmoqda"
+    is_done = (
+        order.get('current_status') == 'DONE' or 
+        order.get('completed_at') is not None or 
+        has_finish_step
+    )
+    status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
     text += f"\nHolat: {status}\n"
     if start_time: text += f"Boshlangan: {start_time}\n"
     if end_time: text += f"Tugagan: {end_time}\n"
