@@ -63,3 +63,61 @@ def get_order_steps(order_id: str):
     except Exception as e:
         logger.error(f"Error getting order steps: {e}")
         return []
+
+def get_unique_cars():
+    try:
+        if not supabase: return []
+        response = supabase.table('orders').select('car_number').execute()
+        cars = set(row['car_number'] for row in response.data if row.get('car_number'))
+        return list(cars)
+    except Exception as e:
+        logger.error(f"Error getting unique cars: {e}")
+        return []
+
+def get_unique_drivers():
+    try:
+        if not supabase: return []
+        response = supabase.table('orders').select('driver_telegram_id, driver_name').execute()
+        drivers = {}
+        for row in response.data:
+            tid = row.get('driver_telegram_id')
+            name = row.get('driver_name')
+            if tid and name:
+                drivers[tid] = name
+        return drivers
+    except Exception as e:
+        logger.error(f"Error getting unique drivers: {e}")
+        return {}
+
+def get_active_orders():
+    try:
+        if not supabase: return []
+        response = supabase.table('orders').select('*').neq('current_status', 'DONE').order('created_at', desc=True).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting active orders: {e}")
+        return []
+
+def get_history(filter_type: str, filter_val: str, date_from: str = None, date_to: str = None):
+    try:
+        if not supabase: return []
+        
+        query = supabase.table('orders').select('*')
+        
+        if filter_type == 'driver':
+            query = query.eq('driver_telegram_id', filter_val)
+        elif filter_type == 'car':
+            query = query.eq('car_number', filter_val)
+            
+        if date_from:
+            query = query.gte('created_at', date_from)
+        if date_to:
+            query = query.lte('created_at', date_to)
+            
+        query = query.order('created_at', desc=True)
+        response = query.execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting history: {e}")
+        return []
+

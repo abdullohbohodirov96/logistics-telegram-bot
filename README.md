@@ -69,5 +69,6 @@ GitHub dagi ushbu repozitoriyani Render.com dagi **Background Worker** orqali ul
 - `GOOGLE_SHEET_ID`
 - `GOOGLE_SERVICE_ACCOUNT_JSON`
 - `GROUP_CHAT_ID` (yoki 0)
+- `ADMIN_IDS` (masalan, 1282014621,123456789)
 - `POLL_INTERVAL_SECONDS` (masalan, 60)
 - `PYTHON_VERSION` (3.11.9 qilib yozing)

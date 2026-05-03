@@ -51,6 +51,7 @@ async def update_group_message(bot: Bot, order_id: str):
 
     text = f"🚚 Yetkazib berish #{order_id}\n\n"
     text += f"Haydovchi: {order['driver_name']}\n"
+    text += f"Telegram ID: {order['driver_telegram_id']}\n"
     text += f"Mashina: {order['car_number']}\n"
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"
@@ -125,6 +126,7 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
     if should_send_to_group():
         text = f"🚚 Yetkazib berish #{order_id}\n\n"
         text += f"Haydovchi: {order['driver_name']}\n"
+        text += f"Telegram ID: {order['driver_telegram_id']}\n"
         text += f"Mashina: {order['car_number']}\n"
         text += f"Manzil: {order['address']}\n"
         text += f"Yuk: {order['cargo']}\n"
