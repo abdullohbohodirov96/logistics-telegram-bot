@@ -101,32 +101,36 @@ def sheets_read_cars() -> list:
         return []
 
     try:
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/DRIVERS!A2:F"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/DRIVERS!A1:Z"
         r = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         r.raise_for_status()
-        rows = r.json().get("values", [])
+        data = r.json().get("values", [])
+        if not data: return []
         
+        headers = [h.strip().lower() for h in data[0]]
+        rows = data[1:]
+        
+        try:
+            idx_car = headers.index('car_number')
+            idx_name = headers.index('driver_name')
+            idx_status = headers.index('status')
+            idx_order = headers.index('current_order_id')
+        except ValueError as e:
+            logger.error(f"DRIVERS header missing in dashboard: {e}")
+            return []
+            
         cars = []
         for row in rows:
-            if len(row) < 3:
+            if len(row) <= max(idx_car, idx_name, idx_status):
                 continue
             
-            dn = row[1].strip()
-            cn = row[2].strip()
-            if not cn:
-                continue
+            cn = row[idx_car].strip()
+            dn = row[idx_name].strip()
+            if not cn: continue
             
-            # D column = status (index 3)
-            raw_status = row[3].strip().upper() if len(row) > 3 and row[3].strip() else ""
-            
-            # Determine status
-            if raw_status in ("BAND", "YUK ORTYAPTI", "YO'LDA", "YETIB BORDI"):
-                status = "BAND"
-            else:
-                status = "BO'SH"
-            
-            # E column = current_order_id (index 4)
-            order_id = row[4].strip() if len(row) > 4 else ""
+            raw_status = row[idx_status].strip().upper() if len(row) > idx_status else ""
+            status = "BAND" if raw_status in ("BAND", "YUK ORTYAPTI", "YO'LDA", "YETIB BORDI") else "BO'SH"
+            order_id = row[idx_order].strip() if len(row) > idx_order else ""
             
             cars.append({
                 "car_number": cn,
