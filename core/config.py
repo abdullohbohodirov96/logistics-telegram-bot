@@ -32,6 +32,8 @@ ODOO_API_KEY = (os.getenv("ODOO_API_KEY") or "").strip()
 
 # Control Flags
 ODOO_USE_SHEETS = os.getenv("ODOO_USE_SHEETS", "true").lower() == "true"
+USE_SHEETS = os.getenv("USE_SHEETS", "true").lower() == "true"
+IS_SHEETS_ENABLED = ODOO_USE_SHEETS and USE_SHEETS
 
 def is_odoo_configured():
     return all([ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY])

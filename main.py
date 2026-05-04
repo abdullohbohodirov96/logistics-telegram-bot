@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, ODOO_USE_SHEETS
+from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, IS_SHEETS_ENABLED
 from core.handlers import router
 
 logging.basicConfig(
@@ -23,7 +23,7 @@ async def main():
     dp.include_router(router)
 
     # Completely disable Sheets scheduler if flag is false
-    if ODOO_USE_SHEETS:
+    if IS_SHEETS_ENABLED:
         try:
             from core.scheduler import check_sheets_job
             logger.info("Google Sheets scheduler starting...")
@@ -33,7 +33,7 @@ async def main():
         except Exception as e:
             logger.error(f"Failed to start Sheets scheduler: {e}")
     else:
-        logger.info("Google Sheets scheduler is DISABLED via USE_SHEETS flag.")
+        logger.info("Google Sheets scheduler is DISABLED via USE_SHEETS/ODOO_USE_SHEETS flag.")
 
     logger.info("Deleting old webhook and starting polling...")
     try:
