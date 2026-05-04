@@ -101,7 +101,7 @@ def get_active_orders():
         logger.error(f"Error getting active orders: {e}")
         return []
 
-def get_history(filter_type: str, filter_val: str, date_from: str = None, date_to: str = None):
+def get_history(filter_type: str, filter_val: str, date_from: str = None, date_to: str = None, limit: int = 50):
     t0 = time.time()
     try:
         if not supabase: return []
@@ -109,8 +109,10 @@ def get_history(filter_type: str, filter_val: str, date_from: str = None, date_t
         query = supabase.table('orders').select('*')
         
         if filter_type == 'drv':
+            # Strictly filter by telegram_id (filter_val should be string tid)
             query = query.eq('driver_telegram_id', filter_val)
         elif filter_type == 'car':
+            # Strictly filter by car_number
             query = query.eq('car_number', filter_val)
             
         if date_from:
@@ -118,7 +120,7 @@ def get_history(filter_type: str, filter_val: str, date_from: str = None, date_t
         if date_to:
             query = query.lte('created_at', date_to)
             
-        query = query.order('created_at', desc=True).limit(100)
+        query = query.order('created_at', desc=True).limit(limit)
         response = query.execute()
         
         elapsed = time.time() - t0

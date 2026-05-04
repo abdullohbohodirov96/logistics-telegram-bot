@@ -107,6 +107,19 @@ def get_request_location_kb():
 def remove_reply_kb():
     return ReplyKeyboardRemove()
 
+def get_source_type_kb(order_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏢 Bizning baza/sklad", callback_data=f"src_base_{order_id}")],
+        [InlineKeyboardButton(text="🏭 Pastavshikdan", callback_data=f"src_supp_{order_id}")],
+        [InlineKeyboardButton(text="📍 Boshqa joydan", callback_data=f"src_other_{order_id}")],
+        [InlineKeyboardButton(text="🔁 Transit", callback_data=f"src_transit_{order_id}")]
+    ])
+
+def get_transit_done_kb(order_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Nuqtalarni tugatish", callback_data=f"transit_done_{order_id}")]
+    ])
+
 def get_finish_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Tushirib bo'ldim", callback_data=f"finish_{order_id}")]

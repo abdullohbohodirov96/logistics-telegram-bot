@@ -139,11 +139,12 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
     t0 = time.time()
     data = await state.get_data()
     filter_type = data.get('filter_type', 'all')
-    filter_val = data.get('filter_val', '0')
+    filter_val = data.get('filter_val')
     date_from = data.get('date_from')
     date_to = data.get('date_to')
     
-    history = await asyncio.to_thread(get_history, filter_type, filter_val if filter_type != 'all' else None, date_from, date_to)
+    # Strictly fetch 50 records as per requirement for better performance
+    history = await asyncio.to_thread(get_history, filter_type, filter_val, date_from, date_to, limit=50)
     
     if not history:
         text = "Ushbu oraliqda ma'lumot topilmadi."
@@ -160,15 +161,23 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
     items = history[start_idx:end_idx]
     
     title = ""
-    if filter_type == 'car': title = f"🚗 {filter_val} tarixi\n"
-    elif filter_type == 'drv': title = f"👤 Haydovchi tarixi\n"
-    else: title = "📋 Barcha tarix\n"
+    if filter_type == 'car': 
+        title = f"🚗 {filter_val} mashinasi tarixi\n"
+    elif filter_type == 'drv': 
+        # Optionally look up name from first item if available
+        drv_name = items[0].get('driver_name', 'Noma\'lum') if items else 'Noma\'lum'
+        title = f"👤 Haydovchi: {drv_name} (ID: {filter_val}) tarixi\n"
+    else: 
+        title = "📋 Barcha tarix\n"
     
     d1 = datetime.fromisoformat(date_from).strftime('%d.%m.%Y') if date_from else ""
     d2 = datetime.fromisoformat(date_to).strftime('%d.%m.%Y') if date_to else ""
     
     if edit:
-        await message.delete()
+        try:
+            await message.delete()
+        except:
+            pass
         
     await message.answer(f"{title}📅 {d1} - {d2}")
     

@@ -9,18 +9,16 @@ import core.keyboards as kb
 router = Router()
 logger = logging.getLogger(__name__)
 
+import json
+
 def format_delivery_short(order):
-    """Format order summary WITHOUT extra DB call.
-    Uses duration_minutes/start_time/finish_time from the order row itself.
-    Falls back to current_status for done detection.
-    """
+    """Format order summary WITHOUT extra DB call."""
     is_done = (
         order.get('current_status') == 'DONE' or 
         order.get('completed_at') is not None
     )
     status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
     
-    # Use start_time/finish_time from order row directly — no extra DB call
     start_time = "Noma'lum"
     end_time = "Noma'lum"
     if order.get('start_time'):
@@ -39,24 +37,44 @@ def format_delivery_short(order):
             pass
     
     text = f"#{order['order_id']} | {order['car_number']}\n"
+    text += f"Haydovchi: {order['driver_name']}\n"
+    
+    st_map = {'base': '🏢 Baza', 'supplier': '🏭 Pastavshik', 'other': '📍 Boshqa', 'transit': '🔁 Transit'}
+    stype = order.get('source_type')
+    if stype:
+        text += f"Joy: {st_map.get(stype, stype)}\n"
+        
     text += f"Manzil: {order['address']}\n"
-    text += f"Yuk: {order['cargo']}\n"
-    text += f"Oldi: {start_time}\n"
-    text += f"Yetkazdi: {end_time}\n"
+    text += f"Oldi: {start_time} | Yetkazdi: {end_time}\n"
     if order.get('duration_minutes'):
         h = order['duration_minutes'] // 60
         m = order['duration_minutes'] % 60
-        text += f"Ketgan vaqt: {f'{h} soat ' if h > 0 else ''}{m} daqiqa\n"
+        text += f"Vaqt: {f'{h}s ' if h > 0 else ''}{m}m\n"
     text += f"Holat: {status}\n"
     return text
 
 def format_delivery_detailed(order):
-    """Detailed format — only called for single order detail view, so DB call is acceptable."""
+    """Detailed format with all fields."""
     steps = get_order_steps(order['order_id'])
     
     text = f"📦 Buyurtma: #{order['order_id']}\n"
     text += f"Haydovchi: {order['driver_name']} (ID: {order['driver_telegram_id']})\n"
     text += f"Mashina: {order['car_number']}\n"
+    
+    st_map = {'base': '🏢 Bizning baza/sklad', 'supplier': '🏭 Pastavshikdan', 'other': '📍 Boshqa joydan', 'transit': '🔁 Transit'}
+    stype = order.get('source_type')
+    if stype:
+        text += f"Yuk olish joyi: {st_map.get(stype, stype)}\n"
+        if order.get('pickup_place_name'):
+            text += f"Joy nomi: {order['pickup_place_name']}\n"
+        if order.get('pickup_location'):
+            text += f"Pickup lokatsiya: https://maps.google.com/?q={order['pickup_location']}\n"
+        if order.get('transit_points'):
+            try:
+                points = json.loads(order['transit_points'])
+                text += f"Transit nuqtalari: {', '.join(points)}\n"
+            except: pass
+
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"
     if order.get('comment'):
