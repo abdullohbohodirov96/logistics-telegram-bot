@@ -44,8 +44,10 @@ def format_delivery_short(order):
     
     transit = "Ha" if order.get('transit_exists') else "Yo'q"
     text += f"Transit: {transit} | Holat: {status}\n"
-    text += f"Yuk: {order.get('cargo', 'Noma\\'lum')}\n"
-    text += f"Manzil: {order.get('address', 'Noma\\'lum')}\n"
+    cargo = order.get('cargo') or "Noma'lum"
+    address = order.get('address') or "Noma'lum"
+    text += f"Yuk: {cargo}\n"
+    text += f"Manzil: {address}\n"
     text += f"Vaqt: {start_time} - {end_time}"
     if order.get('duration_minutes'):
         text += f" ({format_duration(order['duration_minutes'])})"
