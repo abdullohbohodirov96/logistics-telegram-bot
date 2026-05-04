@@ -27,3 +27,12 @@ create table public.order_steps (
     location_lng double precision,
     created_at timestamptz default now()
 );
+
+create table public.drivers_status (
+    car_number text primary key,
+    driver_name text,
+    telegram_id bigint,
+    status text,
+    current_order_id text,
+    updated_at timestamptz default now()
+);

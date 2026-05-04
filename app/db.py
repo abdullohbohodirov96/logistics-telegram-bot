@@ -121,3 +121,27 @@ def get_history(filter_type: str, filter_val: str, date_from: str = None, date_t
         logger.error(f"Error getting history: {e}")
         return []
 
+def upsert_driver_status(car_number: str, driver_name: str, telegram_id: int, status: str, current_order_id: str):
+    try:
+        if not supabase: return
+        data = {
+            'car_number': car_number,
+            'driver_name': driver_name,
+            'telegram_id': telegram_id,
+            'status': status,
+            'current_order_id': current_order_id
+        }
+        # Assuming car_number is unique/primary key in drivers_status table
+        supabase.table('drivers_status').upsert(data).execute()
+    except Exception as e:
+        logger.error(f"Error upserting driver status in Supabase: {e}")
+
+def get_all_drivers_status_db():
+    try:
+        if not supabase: return []
+        response = supabase.table('drivers_status').select('*').execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting all drivers status from Supabase: {e}")
+        return []
+

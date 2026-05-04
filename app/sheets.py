@@ -2,6 +2,7 @@ import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from app.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID
+from app.db import upsert_driver_status
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,10 @@ def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: i
                 insertDataOption='INSERT_ROWS',
                 body=body
             ).execute()
+        
+        # Also upsert to Supabase
+        upsert_driver_status(car_number, driver_name, telegram_id, status, current_order_id)
+        
     except Exception as e:
         logger.error(f"Error updating driver status: {e}")
 

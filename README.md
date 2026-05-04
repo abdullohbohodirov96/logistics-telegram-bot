@@ -71,13 +71,22 @@ Agar xabarlar guruhga tushishini istasangiz, botni guruhga qo'shib admin qiling 
 
 ## ☁️ Render.com ga joylash
 
-GitHub dagi ushbu repozitoriyani Render.com dagi **Background Worker** orqali ulab, quyidagi Environment Variables (Muhit o'zgaruvchilari) ni qo'shing:
-- `BOT_TOKEN`
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-- `GOOGLE_SHEET_ID`
-- `GOOGLE_SERVICE_ACCOUNT_JSON`
-- `GROUP_CHAT_ID` (yoki 0)
-- `ADMIN_IDS` (masalan, 1282014621,123456789)
-- `POLL_INTERVAL_SECONDS` (masalan, 60)
-- `PYTHON_VERSION` (3.11.9 qilib yozing)
+Render.com da **2 ta service** yaratish kerak (ikkalasi ham bitta GitHub repozitoriydan olinadi):
+
+### 1. Bot (Background Worker)
+- **Environment:** Python
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `python main.py`
+- Barcha quyidagi o'zgaruvchilarni (`Environment Variables`) kiriting:
+  - `BOT_TOKEN`
+  - `SUPABASE_URL`, `SUPABASE_KEY`
+  - `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`
+  - `GROUP_CHAT_ID`, `ADMIN_IDS`, `POLL_INTERVAL_SECONDS`
+  - `PYTHON_VERSION = 3.11.9`
+
+### 2. TV Dashboard (Web Service)
+- **Environment:** Python
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `uvicorn web_app:app --host 0.0.0.0 --port $PORT`
+- Xuddi shu yuqoridagi `SUPABASE_URL` va `SUPABASE_KEY` larni kiriting (chunki u bazadan o'qiydi).
+- Ishga tushgach, taqdim etilgan havolaga `/dashboard` qo'shib yirik TV ekranga (F11 fullscreen) qotirib qo'yasiz. Har 15 sekundda avtomatik o'zini yangilab boradi.
