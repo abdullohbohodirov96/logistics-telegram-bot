@@ -145,8 +145,6 @@ def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: i
         
         if row_idx == -1:
             logger.warning(f"Car {car_number} not found in drivers sheet, cannot update status")
-            # Still upsert to Supabase
-            upsert_driver_status(car_number, driver_name, telegram_id, status, current_order_id)
             return
         
         # Update columns D, E, F, G (status, current_order_id, started_at, updated_at)

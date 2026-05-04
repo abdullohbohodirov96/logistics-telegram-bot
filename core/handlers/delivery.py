@@ -362,7 +362,8 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
         try:
             sheets = await asyncio.to_thread(get_sheets_service)
             if sheets:
-                res = await asyncio.to_thread(sheets.values().get, spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F').execute()
+                request = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F')
+                res = await asyncio.to_thread(request.execute)
                 vals = res.get('values', [])
                 for i, row in enumerate(vals):
                     if len(row) > 0 and row[0].strip() == order_id:

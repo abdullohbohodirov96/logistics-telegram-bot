@@ -25,7 +25,7 @@ async def check_sheets_job(bot: Bot):
             car_number = order['car_number']
             if car_number not in drivers:
                 logger.warning(f"Driver not found for car {car_number}. Updating status to ERROR_DRIVER_NOT_FOUND.")
-                update_order_status(order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
+                await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
                 continue
                 
             driver_info = drivers[car_number]
