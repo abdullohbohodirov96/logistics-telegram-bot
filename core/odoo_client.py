@@ -13,6 +13,17 @@ class OdooClient:
         self.password = ODOO_API_KEY
         self.uid = None
 
+    async def get_version(self):
+        """Get Odoo server version."""
+        try:
+            common_url = f"{self.url}/xmlrpc/2/common"
+            common = xmlrpc.client.ServerProxy(common_url, timeout=10)
+            version = await asyncio.to_thread(common.version)
+            return version
+        except Exception as e:
+            logger.error(f"Odoo Version Error: {e}")
+            return None
+
     async def authenticate(self):
         """Authenticate with Odoo and get UID with detailed logging."""
         if not is_odoo_configured():
@@ -20,8 +31,8 @@ class OdooClient:
             return None
         
         common_url = f"{self.url}/xmlrpc/2/common"
-        logger.info(f"Odoo Debug: URL={self.url}, DB={self.db}, Username={self.username}, API_KEY={'SET' if self.password else 'MISSING'}")
-        logger.info(f"Odoo Debug: Target XML-RPC URL={common_url}")
+        key_len = len(self.password) if self.password else 0
+        logger.info(f"Odoo Auth Attempt: URL={self.url}, DB={self.db}, User={self.username}, KeyLen={key_len}")
 
         try:
             common = xmlrpc.client.ServerProxy(common_url, timeout=10)
@@ -32,20 +43,24 @@ class OdooClient:
                 logger.info(f"Odoo Auth Success: UID={uid}")
                 return uid
             else:
-                logger.error("Odoo Auth Failed: common.authenticate returned False (Invalid credentials)")
-                return None
+                logger.error("Odoo Auth Failed: common.authenticate returned False")
+                return False
         except Exception as e:
             logger.error(f"Odoo RPC Error during authentication: {str(e)}")
-            return None
+            raise e
 
     async def get_delivery_orders(self, limit=10):
         """Get last N delivery orders from stock.picking."""
         if not self.uid:
-            if not await self.authenticate():
-                return []
+            # Try to authenticate first
+            try:
+                auth_res = await self.authenticate()
+                if not auth_res: return []
+            except: return []
 
         try:
-            models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object", timeout=15)
+            models_url = f"{self.url}/xmlrpc/2/object"
+            models = xmlrpc.client.ServerProxy(models_url, timeout=15)
             domain = [('picking_type_code', '=', 'outgoing')]
             fields = ['id', 'name', 'partner_id', 'scheduled_date', 'state', 'origin']
             
@@ -63,21 +78,37 @@ class OdooClient:
             return []
 
     async def test_connection(self):
-        """Test connection and return detailed status message."""
-        debug_info = f"Config: URL={'SET' if self.url else 'MISSING'}, DB={'SET' if self.db else 'MISSING'}, User={'SET' if self.username else 'MISSING'}, Key={'SET' if self.password else 'MISSING'}\n"
-        debug_info += f"Target: {self.url}/xmlrpc/2/common\n"
-
+        """Perform comprehensive connection test and return report."""
         if not is_odoo_configured():
-            return False, f"❌ Odoo variables missing!\n{debug_info}"
+            return False, "❌ Odoo env variables missing (URL, DB, Username yoki Key yo'q)"
         
+        report = f"🔍 **Odoo Test Hisoboti:**\n"
+        report += f"🌐 URL: `{self.url}`\n"
+        report += f"🗄 DB: `{self.db}`\n"
+        report += f"👤 User: `{self.username}`\n"
+        report += f"🔑 Key length: {len(self.password) if self.password else 0}\n\n"
+
         try:
+            # 1. Check version
+            version_info = await self.get_version()
+            if version_info:
+                v_str = version_info.get('server_version', 'Noma\'lum')
+                report += f"✅ Server Connected. Version: {v_str}\n"
+            else:
+                report += f"❌ Server connection failed (Timeout/URL error)\n"
+                return False, report
+
+            # 2. Authenticate
             uid = await self.authenticate()
             if uid:
-                return True, f"✅ Odoo connected! UID: {uid}\n{debug_info}"
+                report += f"✅ Odoo authenticated! UID: {uid}"
+                return True, report
             else:
-                return False, f"❌ Odoo authentication failed!\n{debug_info}"
+                report += f"❌ Auth failed: DB, email yoki API key noto'g'ri"
+                return False, report
         except Exception as e:
-            return False, f"❌ Odoo Error: {str(e)}\n{debug_info}"
+            report += f"⚠️ RPC Error: {str(e)}"
+            return False, report
 
 # Singleton instance
 odoo_client = OdooClient()

@@ -5,7 +5,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, ODOO_USE_SHEETS
 from core.handlers import router
-from core.scheduler import check_sheets_job
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,25 +22,28 @@ async def main():
     
     dp.include_router(router)
 
-    # Start scheduler ONLY if ODOO_USE_SHEETS is True
+    # Completely disable Sheets scheduler if flag is false
     if ODOO_USE_SHEETS:
-        logger.info("Google Sheets scheduler starting...")
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
-        scheduler.start()
+        try:
+            from core.scheduler import check_sheets_job
+            logger.info("Google Sheets scheduler starting...")
+            scheduler = AsyncIOScheduler()
+            scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
+            scheduler.start()
+        except Exception as e:
+            logger.error(f"Failed to start Sheets scheduler: {e}")
     else:
-        logger.info("Google Sheets scheduler is DISABLED (ODOO_USE_SHEETS=false)")
+        logger.info("Google Sheets scheduler is DISABLED via USE_SHEETS flag.")
 
     logger.info("Deleting old webhook and starting polling...")
     try:
-        # drop_pending_updates=True is critical to avoid old message storms
+        # Clear webhook and drops pending updates to avoid multiple instance issues
         await bot.delete_webhook(drop_pending_updates=True)
         
-        # Start polling
-        # If another instance is running, this might throw TelegramConflictError
+        # Start polling. One bot instance will keep connection.
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"Bot execution error: {e}")
+        logger.error(f"Critical bot error: {e}")
     finally:
         await bot.session.close()
 
@@ -49,4 +51,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped.")
+        logger.info("Bot execution stopped by user/system.")
