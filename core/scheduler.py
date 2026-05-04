@@ -59,7 +59,7 @@ async def check_sheets_job(bot: Bot):
                         reply_markup=kb.get_take_delivery_kb(order['order_id'])
                     )
                     await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
-                    await asyncio.to_thread(update_driver_status_sheet, car_number, driver_name, telegram_id, 'BAND', order['order_id'])
+                    await asyncio.to_thread(update_driver_status_sheet, car_number, 'BAND', order['order_id'])
                     logger.info(f"Order {order['order_id']} sent to driver {driver_name}.")
                 except Exception as e:
                     logger.error(f"Failed to send message to driver {driver_name} (ID: {telegram_id}): {e}")

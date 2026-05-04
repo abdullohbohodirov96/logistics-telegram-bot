@@ -28,8 +28,8 @@ def get_sheets_service():
         return None
 
 def get_drivers():
-    """Read driver list from drivers sheet.
-    Columns: A=car_number, B=driver_name, C=telegram_id, D=status, E=current_order_id, F=started_at, G=updated_at
+    """Read driver list from DRIVERS sheet.
+    Columns: A=car_number, B=driver_name, C=driver_user_id, D=status, E=current_order_id, F=updated_at
     """
     sheets = get_sheets_service()
     if not sheets: return {}
@@ -37,7 +37,7 @@ def get_drivers():
     try:
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='drivers!A2:C'
+            range='DRIVERS!A2:C'
         ).execute()
         values = result.get('values', [])
         
@@ -60,154 +60,164 @@ def get_drivers():
         return {}
 
 def get_new_orders():
+    """Read new orders from ORDERS sheet.
+    Columns: A=order_id, B=driver_user_id, C=driver_name, D=car_number, E=status
+    We look for status = 'SEND' in column E.
+    """
     sheets = get_sheets_service()
     if not sheets: return []
     
     try:
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='orders!A2:F'
+            range='ORDERS!A2:E'
         ).execute()
         values = result.get('values', [])
         
         new_orders = []
-        
         for i, row in enumerate(values):
-            # A: order_id, B: car_number, C: address, D: cargo, E: comment, F: status
-            if len(row) >= 6 and row[5].strip().upper() == 'SEND':
+            if len(row) >= 5 and row[4].strip().upper() == 'SEND':
                 order = {
-                    'row_index': i + 2, # +2 because 1-based and A2 is start
+                    'row_index': i + 2,
                     'order_id': row[0].strip(),
-                    'car_number': row[1].strip(),
-                    'address': row[2].strip() if len(row) > 2 else '',
-                    'cargo': row[3].strip() if len(row) > 3 else '',
-                    'comment': row[4].strip() if len(row) > 4 else ''
+                    'car_number': row[3].strip(),
+                    'driver_user_id': row[1].strip()
                 }
                 new_orders.append(order)
-                
         return new_orders
     except Exception as e:
         logger.error(f"Error getting new orders: {e}")
         return []
 
 def update_order_status(row_index: int, status: str):
+    """Update status column (E) in ORDERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return
     
     try:
-        range_name = f'orders!F{row_index}'
-        body = {
-            'values': [[status]]
-        }
+        range_name = f'ORDERS!E{row_index}'
+        body = {'values': [[status]]}
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=range_name,
             valueInputOption='USER_ENTERED',
             body=body
         ).execute()
-        logger.info(f"Updated row {row_index} status to {status}")
+        logger.info(f"Updated ORDERS row {row_index} status to {status}")
     except Exception as e:
-        logger.error(f"Error updating order status for row {row_index}: {e}")
+        logger.error(f"Error updating order status in ORDERS sheet: {e}")
 
-def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: int, status: str, current_order_id: str):
-    """Update car status directly in drivers sheet (columns D-G).
-    
-    drivers sheet layout:
-    A=car_number | B=driver_name | C=telegram_id | D=status | E=current_order_id | F=started_at | G=updated_at
-    
-    Bot calls this with:
-      status='BAND', current_order_id='ORD-123' when delivery starts
-      status="BO'SH", current_order_id='' when delivery finishes
+def update_driver_status_sheet(car_number: str, status: str, current_order_id: str = ""):
+    """Update driver live status in DRIVERS sheet.
+    Columns: D=status, E=current_order_id, F=updated_at
     """
     sheets = get_sheets_service()
     if not sheets: return
     
     try:
-        from datetime import datetime
-        import pytz
-        tz = pytz.timezone('Asia/Tashkent')
-        now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+        from core.utils import get_now
+        now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Find the car row in drivers sheet
+        # Find the car row
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='drivers!A:G'
+            range='DRIVERS!A:A'
         ).execute()
         values = result.get('values', [])
         
         row_idx = -1
         for i, row in enumerate(values):
-            if i == 0:
-                continue  # skip header
-            if len(row) > 0 and row[0].strip().upper().replace(' ', '') == car_number.strip().upper().replace(' ', ''):
-                row_idx = i + 1  # 1-based
+            if i == 0: continue
+            if row and row[0].strip().upper().replace(' ', '') == car_number.strip().upper().replace(' ', ''):
+                row_idx = i + 1
                 break
         
         if row_idx == -1:
-            logger.warning(f"Car {car_number} not found in drivers sheet, cannot update status")
+            logger.warning(f"Car {car_number} not found in DRIVERS sheet")
             return
         
-        # Update columns D, E, F, G (status, current_order_id, started_at, updated_at)
-        started_at = now_str if status == 'BAND' else ''
-        
-        body = {
-            'values': [[status, current_order_id, started_at, now_str]]
-        }
+        body = {'values': [[status, current_order_id, now_str]]}
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'drivers!D{row_idx}:G{row_idx}',
+            range=f'DRIVERS!D{row_idx}:F{row_idx}',
             valueInputOption='USER_ENTERED',
             body=body
         ).execute()
-        
-        logger.info(f"Updated drivers sheet row {row_idx}: {car_number} -> {status} / order={current_order_id}")
-        
+        logger.info(f"DRIVERS status changed: {car_number} -> {status}")
     except Exception as e:
-        logger.error(f"Error updating driver status in drivers sheet: {e}")
+        logger.error(f"Error updating DRIVERS sheet: {e}")
 
-def get_drivers_status():
-    """Read driver statuses from drivers sheet (columns A-G)."""
+def append_order_to_history_sheet(order_data: dict):
+    """Append finished order to ORDERS sheet for history/mirror.
+    Columns: order_id, driver_user_id, driver_name, car_number, status, start_time, transit_exists, completed_at, duration_minutes, created_at
+    """
     sheets = get_sheets_service()
-    if not sheets: return []
+    if not sheets: return
+    
     try:
-        result = sheets.values().get(
+        row = [
+            order_data.get('order_id', ''),
+            order_data.get('driver_user_id', ''),
+            order_data.get('driver_name', ''),
+            order_data.get('car_number', ''),
+            order_data.get('status', 'DONE'),
+            order_data.get('start_time', ''),
+            str(order_data.get('transit_exists', False)),
+            order_data.get('completed_at', ''),
+            order_data.get('duration_minutes', ''),
+            order_data.get('created_at', '')
+        ]
+        
+        sheets.values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='drivers!A2:G'
+            range='ORDERS!A2',
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body={'values': [row]}
         ).execute()
-        return result.get('values', [])
+        logger.info(f"Order {order_data.get('order_id')} appended to ORDERS sheet")
     except Exception as e:
-        logger.error(f"Error getting drivers status: {e}")
-        return []
+        logger.error(f"Error appending to ORDERS sheet: {e}")
+
 def get_all_drivers_list():
-    """Returns a list of unique drivers [(name, tid), ...] from drivers sheet."""
+    """Returns list of unique drivers [(name, tid), ...] from DRIVERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers!B2:C').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!B2:C').execute()
         rows = result.get('values', [])
         drivers = []
-        seen_tid = set()
+        seen = set()
         for row in rows:
             if len(row) >= 2:
-                name = row[0].strip()
-                tid = row[1].strip()
-                if tid not in seen_tid:
+                name, tid = row[0].strip(), row[1].strip()
+                if tid not in seen:
                     drivers.append((name, tid))
-                    seen_tid.add(tid)
+                    seen.add(tid)
         return drivers
     except Exception as e:
-        logger.error(f"Error getting all drivers list: {e}")
+        logger.error(f"Error loading DRIVERS: {e}")
         return []
 
 def get_all_cars_list():
-    """Returns a list of unique car numbers from drivers sheet."""
+    """Returns list of unique car numbers from DRIVERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers!A2:A').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:A').execute()
         rows = result.get('values', [])
-        cars = sorted(list(set(row[0].strip() for row in rows if row)))
-        return cars
+        return sorted(list(set(row[0].strip() for row in rows if row)))
     except Exception as e:
-        logger.error(f"Error getting all cars list: {e}")
+        logger.error(f"Error loading cars from DRIVERS: {e}")
+        return []
+
+def get_drivers_status():
+    """Returns all rows from DRIVERS sheet for dashboard/admin."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:F').execute()
+        return result.get('values', [])
+    except Exception as e:
+        logger.error(f"Error getting drivers status from sheet: {e}")
         return []

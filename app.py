@@ -101,7 +101,7 @@ def sheets_read_cars() -> list:
         return []
 
     try:
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/drivers!A2:G"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/DRIVERS!A2:F"
         r = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         r.raise_for_status()
         rows = r.json().get("values", [])
