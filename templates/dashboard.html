@@ -15,7 +15,6 @@
             box-sizing: border-box;
             display: flex; flex-direction: column;
         }
-        /* Header */
         .header {
             display: flex; justify-content: space-between; align-items: center;
             background-color: #1e1e1e;
@@ -26,8 +25,6 @@
         .logo span { color: #e97609; }
         .title { font-size: 32px; font-weight: bold; color: #ddd; letter-spacing: 2px; text-transform: uppercase;}
         .clock { font-size: 45px; font-weight: 900; color: #e97609; }
-
-        /* Stats Row */
         .stats-row {
             display: flex; justify-content: space-between; gap: 20px;
             padding: 20px 40px; height: 160px; box-sizing: border-box;
@@ -39,24 +36,19 @@
         }
         .stat-title { font-size: 22px; color: #aaa; text-transform: uppercase; font-weight: bold; margin-bottom: 10px; }
         .stat-val { font-size: 55px; font-weight: 900; color: white; line-height: 1; }
-        
         .c-active { border-color: #007bff; } .c-active .stat-val { color: #007bff; }
         .c-done { border-color: #28a745; } .c-done .stat-val { color: #28a745; }
         .c-fail { border-color: #dc3545; } .c-fail .stat-val { color: #dc3545; }
         .c-cars { border-color: #e97609; } .c-cars .stat-val { color: #e97609; }
-
-        /* Main Grid Area */
         .main-area {
             flex: 1; display: flex; padding: 0 40px 20px 40px; gap: 30px; box-sizing: border-box;
             height: calc(1080px - 260px);
         }
-        
         .cars-section {
             flex: 3; background-color: #1a1a1a; border-radius: 20px; padding: 25px;
             display: flex; flex-direction: column;
         }
         .section-title { font-size: 28px; font-weight: bold; margin-bottom: 20px; color: #fff; border-left: 5px solid #e97609; padding-left: 15px; }
-        
         .cars-grid {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
@@ -64,8 +56,6 @@
             gap: 15px;
             overflow: hidden;
         }
-        
-        /* Car Card */
         .car-card {
             background-color: #2a2a2a; border-radius: 12px; padding: 12px;
             display: flex; flex-direction: column; justify-content: space-between;
@@ -76,14 +66,11 @@
         .status-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 5px; }
         .status-badge { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 6px; color: white; }
         .order-id { font-size: 18px; font-weight: bold; color: #ccc; }
-
         .s-bosh { border-color: #28a745; } .s-bosh .status-badge { background-color: #28a745; }
         .s-band { border-color: #ffc107; } .s-band .status-badge { background-color: #ffc107; color: black; }
         .s-yuk { border-color: #e97609; } .s-yuk .status-badge { background-color: #e97609; }
         .s-yolda { border-color: #007bff; } .s-yolda .status-badge { background-color: #007bff; }
         .s-yetib { border-color: #6f42c1; } .s-yetib .status-badge { background-color: #6f42c1; }
-
-        /* Updates Section */
         .updates-section {
             flex: 1; background-color: #1a1a1a; border-radius: 20px; padding: 25px;
             display: flex; flex-direction: column;
@@ -101,7 +88,7 @@
         <div class="title">Logistika Monitoring Dashboard</div>
         <div class="clock" id="clock">00:00:00</div>
     </div>
-    
+
     <div class="stats-row">
         <div class="stat-card c-active">
             <div class="stat-title">Aktiv Vazifalar</div>
@@ -116,7 +103,7 @@
             <div class="stat-val">{{ stats.failed }}</div>
         </div>
         <div class="stat-card c-cars">
-            <div class="stat-title">Mashinalar (Bo'sh / Band)</div>
+            <div class="stat-title">Mashinalar</div>
             <div class="stat-val" style="font-size: 45px; display: flex; align-items:baseline; gap: 10px;">
                 {{ total }} <span style="font-size:24px; color:#aaa;">({{ free }} / {{ busy }})</span>
             </div>
@@ -128,15 +115,20 @@
             <div class="section-title">🚗 Mashinalar Holati</div>
             <div class="cars-grid">
                 {% for d in drivers %}
-                    {% set s = d.status | string %}
+                    {% set s = (d.status or '') | upper %}
                     {% set sc = '' %}
-                    {% if 'BO‘SH' in s or 'BO' in s %} {% set sc = 's-bosh' %}
-                    {% elif 'BAND' in s %} {% set sc = 's-band' %}
-                    {% elif 'YUK' in s %} {% set sc = 's-yuk' %}
-                    {% elif 'YO‘LDA' in s or 'YO' in s %} {% set sc = 's-yolda' %}
-                    {% elif 'YETIB' in s %} {% set sc = 's-yetib' %}
+                    {% if 'BO' in s and 'SH' in s %}
+                        {% set sc = 's-bosh' %}
+                    {% elif 'BAND' in s %}
+                        {% set sc = 's-band' %}
+                    {% elif 'YUK' in s %}
+                        {% set sc = 's-yuk' %}
+                    {% elif 'YO' in s and 'LDA' in s %}
+                        {% set sc = 's-yolda' %}
+                    {% elif 'YETIB' in s %}
+                        {% set sc = 's-yetib' %}
                     {% endif %}
-                    
+
                     <div class="car-card {{ sc }}">
                         <div>
                             <div class="car-number">{{ d.car_number }}</div>
@@ -150,7 +142,7 @@
                 {% endfor %}
             </div>
         </div>
-        
+
         <div class="updates-section">
             <div class="section-title">⏱ Oxirgi Yangilanishlar</div>
             <div class="updates-list">
@@ -175,11 +167,8 @@
         }
         setInterval(updateClock, 1000);
         updateClock();
-
-        // Auto refresh every 10 seconds as requested
-        setTimeout(() => {
-            window.location.reload();
-        }, 10000);
+        // Auto refresh every 15 seconds
+        setTimeout(() => { window.location.reload(); }, 15000);
     </script>
 </body>
 </html>

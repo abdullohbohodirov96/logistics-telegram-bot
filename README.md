@@ -86,7 +86,7 @@ Render.com da **2 ta service** yaratish kerak (ikkalasi ham bitta GitHub repozit
 
 ### 2. TV Dashboard (Web Service)
 - **Environment:** Python
-- **Build Command:** `pip install -r requirements.txt`
+- **Build Command:** `pip install -r requirements-web.txt`
 - **Start Command:** `uvicorn app:app --host 0.0.0.0 --port $PORT`
-- Xuddi shu yuqoridagi `SUPABASE_URL` va `SUPABASE_KEY` larni kiriting (chunki u bazadan o'qiydi).
-- Ishga tushgach, taqdim etilgan havolaga `/dashboard` qo'shib yirik TV ekranga (F11 fullscreen) qotirib qo'yasiz. Har 15 sekundda avtomatik o'zini yangilab boradi.
+- Faqat 2 ta env kerak: `SUPABASE_URL` va `SUPABASE_KEY`
+- Dashboard root `/` sahifada ochiladi. TV ekranga F11 fullscreen qotirib qo'ying.
