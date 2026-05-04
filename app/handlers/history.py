@@ -29,6 +29,10 @@ def format_delivery_short(order):
     text += f"Yuk: {order['cargo']}\n"
     text += f"Oldi: {start_time}\n"
     text += f"Yetkazdi: {end_time}\n"
+    if order.get('duration_minutes'):
+        h = order['duration_minutes'] // 60
+        m = order['duration_minutes'] % 60
+        text += f"Ketgan vaqt: {f'{h} soat ' if h > 0 else ''}{m} daqiqa\n"
     text += f"Holat: {status}\n"
     return text
 
@@ -74,6 +78,11 @@ def format_delivery_detailed(order):
     text += f"\nHolat: {status}\n"
     if start_time: text += f"Boshlangan: {start_time}\n"
     if end_time: text += f"Tugagan: {end_time}\n"
+    
+    if order.get('duration_minutes'):
+        h = order['duration_minutes'] // 60
+        m = order['duration_minutes'] % 60
+        text += f"Ketgan vaqt: {f'{h} soat ' if h > 0 else ''}{m} daqiqa\n"
     
     if loc_lat and loc_lng:
         text += f"Lokatsiya: https://maps.google.com/?q={loc_lat},{loc_lng}\n"

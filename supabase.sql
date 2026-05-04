@@ -10,7 +10,10 @@ create table public.orders (
     current_status text,
     group_message_id bigint,
     created_at timestamptz default now(),
-    completed_at timestamptz
+    completed_at timestamptz,
+    start_time timestamptz,
+    finish_time timestamptz,
+    duration_minutes integer
 );
 
 create table public.order_steps (

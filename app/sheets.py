@@ -98,3 +98,54 @@ def update_order_status(row_index: int, status: str):
         logger.info(f"Updated row {row_index} status to {status}")
     except Exception as e:
         logger.error(f"Error updating order status for row {row_index}: {e}")
+
+def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: int, status: str, current_order_id: str):
+    sheets = get_sheets_service()
+    if not sheets: return
+    
+    try:
+        from datetime import datetime
+        import pytz
+        tz = pytz.timezone('Asia/Tashkent')
+        updated_at = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+        
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers_status!A:F').execute()
+        values = result.get('values', [])
+        
+        row_idx = -1
+        for i, row in enumerate(values):
+            if len(row) > 0 and row[0].strip() == car_number:
+                row_idx = i + 1
+                break
+                
+        body = {
+            'values': [[car_number, driver_name, str(telegram_id), status, current_order_id, updated_at]]
+        }
+        
+        if row_idx != -1:
+            sheets.values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f'drivers_status!A{row_idx}:F{row_idx}',
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+        else:
+            sheets.values().append(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range='drivers_status!A:F',
+                valueInputOption='USER_ENTERED',
+                insertDataOption='INSERT_ROWS',
+                body=body
+            ).execute()
+    except Exception as e:
+        logger.error(f"Error updating driver status: {e}")
+
+def get_drivers_status():
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers_status!A2:F').execute()
+        return result.get('values', [])
+    except Exception as e:
+        logger.error(f"Error getting drivers status: {e}")
+        return []

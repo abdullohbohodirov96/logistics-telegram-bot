@@ -1,19 +1,25 @@
 import logging
+import asyncio
 from aiogram import Bot
-from app.sheets import get_new_orders, get_drivers, update_order_status
+from app.sheets import get_new_orders, get_drivers, update_order_status, update_driver_status_sheet
 from app.db import create_order
 import app.keyboards as kb
 
 logger = logging.getLogger(__name__)
 
+is_checking = False
+
 async def check_sheets_job(bot: Bot):
-    logger.info("Checking Google Sheets for new orders...")
+    global is_checking
+    if is_checking:
+        return
+    is_checking = True
     try:
-        new_orders = get_new_orders()
+        new_orders = await asyncio.to_thread(get_new_orders)
         if not new_orders:
             return
             
-        drivers = get_drivers()
+        drivers = await asyncio.to_thread(get_drivers)
         
         for order in new_orders:
             car_number = order['car_number']
@@ -52,13 +58,16 @@ async def check_sheets_job(bot: Bot):
                         text=text,
                         reply_markup=kb.get_take_delivery_kb(order['order_id'])
                     )
-                    update_order_status(order['row_index'], 'SENT')
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
+                    await asyncio.to_thread(update_driver_status_sheet, car_number, driver_name, telegram_id, 'BAND', order['order_id'])
                     logger.info(f"Order {order['order_id']} sent to driver {driver_name}.")
                 except Exception as e:
                     logger.error(f"Failed to send message to driver {driver_name} (ID: {telegram_id}): {e}")
-                    update_order_status(order['row_index'], 'ERROR_BOT_BLOCKED')
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_BOT_BLOCKED')
             else:
-                logger.info(f"Order {order['order_id']} already exists in db or failed to create.")
+                pass # Already exists
                 
     except Exception as e:
         logger.error(f"Error in check_sheets_job: {e}")
+    finally:
+        is_checking = False

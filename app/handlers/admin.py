@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from app.config import ADMIN_IDS, TIMEZONE
 from app.db import get_history, get_unique_cars, get_unique_drivers, get_active_orders
 import app.keyboards as kb
+from app.sheets import get_drivers_status
 from app.states import AdminProcess
 from app.handlers.history import format_delivery_short, format_delivery_detailed
 
@@ -191,3 +192,26 @@ async def show_active(callback: CallbackQuery):
     if total_pages > 1:
         await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
     await callback.answer()
+
+@router.callback_query(F.data == "adm_cars_status")
+async def show_cars_status(callback: CallbackQuery):
+    await callback.answer("Yuklanmoqda...", show_alert=False)
+    
+    status_data = get_drivers_status()
+    if not status_data:
+        await callback.message.edit_text("Mashinalar holati topilmadi (Google Sheets yoki baza bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        return
+        
+    text = "🚗 **Mashinalar holati:**\n\n"
+    for row in status_data:
+        if len(row) >= 4:
+            car = row[0]
+            status = row[3]
+            order_id = row[4] if len(row) > 4 else ""
+            
+            if order_id:
+                text += f"🔹 {car} — {status} — #{order_id}\n"
+            else:
+                text += f"🔹 {car} — {status}\n"
+                
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))

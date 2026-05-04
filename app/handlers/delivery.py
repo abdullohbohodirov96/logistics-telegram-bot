@@ -1,13 +1,14 @@
 import logging
 from datetime import datetime
 import pytz
+import asyncio
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
 from app.config import TIMEZONE, GROUP_CHAT_ID
 from app.db import get_order, update_order, save_order_step, get_order_steps
-from app.sheets import update_order_status
+from app.sheets import update_order_status, update_driver_status_sheet
 from app.states import DeliveryProcess
 import app.keyboards as kb
 
@@ -99,73 +100,72 @@ async def update_group_message(bot: Bot, order_id: str):
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
+    await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("_")[1]
-    order = get_order(order_id)
+    
+    order = await asyncio.to_thread(get_order, order_id)
     if not order:
-        await callback.answer("Buyurtma topilmadi.", show_alert=True)
+        await callback.message.answer("Buyurtma topilmadi.")
         return
 
     t = get_current_time()
-    save_order_step({
+    await asyncio.to_thread(save_order_step, {
         'order_id': order_id,
         'step_name': 'take_delivery',
         'time_text': t
     })
 
-    from app.sheets import get_sheets_service
-    from app.config import GOOGLE_SHEET_ID
-    try:
-        sheets = get_sheets_service()
-        if sheets:
-            res = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F').execute()
-            vals = res.get('values', [])
-            for i, row in enumerate(vals):
-                if len(row) > 0 and row[0].strip() == order_id:
-                    update_order_status(i + 1, 'IN_PROGRESS')
-                    break
-    except Exception as e:
-        pass
+    # Run heavy operations in background
+    async def bg_task():
+        await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BAND', order_id)
+        
+        if should_send_to_group():
+            text = f"🚚 Yetkazib berish #{order_id}\n"
+            text += f"Haydovchi: {order['driver_name']}\n"
+            text += f"Mashina: {order['car_number']}\n"
+            text += f"Manzil: {order['address']}\n"
+            text += f"Yuk: {order['cargo']}\n\n"
+            text += f"Holat: 🚚 Yo‘lda\n"
+            text += f"Oldi: {t}\n"
+            text += f"Oxirgi bosqich: Vazifani oldi — {t}\n"
 
-    if should_send_to_group():
-        text = f"🚚 Yetkazib berish #{order_id}\n"
-        text += f"Haydovchi: {order['driver_name']}\n"
-        text += f"Mashina: {order['car_number']}\n"
-        text += f"Manzil: {order['address']}\n"
-        text += f"Yuk: {order['cargo']}\n\n"
-        text += f"Holat: 🚚 Yo‘lda\n"
-        text += f"Oldi: {t}\n"
-        text += f"Oxirgi bosqich: Vazifani oldi — {t}\n"
+            try:
+                msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
+                await asyncio.to_thread(update_order, order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
+            except Exception as e:
+                logger.error(f"Error sending to group: {e}")
+        else:
+            await asyncio.to_thread(update_order, order_id, {'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
 
-        try:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
-            update_order(order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery'})
-        except Exception as e:
-            logger.error(f"Error sending to group: {e}")
-    else:
-        update_order(order_id, {'current_status': 'take_delivery'})
+    asyncio.create_task(bg_task())
 
     await callback.message.edit_text("✅ Yetkazib berish qabul qilindi.")
     await callback.message.answer("A-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
-    await callback.answer()
 
 ZONES = ["A", "B", "C", "D"]
 
 @router.callback_query(F.data.startswith("z_"))
 async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    await callback.answer("✅ Qabul qilindi")
     parts = callback.data.split("_")
     zone = parts[1]
     val = parts[2]
     order_id = parts[3]
     
     t = get_current_time()
-    save_order_step({
-        'order_id': order_id,
-        'step_name': f'zone_{zone}',
-        'step_value': val,
-        'time_text': t
-    })
     
-    await update_group_message(bot, order_id)
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': f'zone_{zone}',
+            'step_value': val,
+            'time_text': t
+        })
+        order = await asyncio.to_thread(get_order, order_id)
+        if order:
+            await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YUK ORTYAPTI', order_id)
+
+    asyncio.create_task(bg_task())
     
     action_text = "✅ Oldim" if val == 'y' else "❌ Olmadim"
     await callback.message.edit_text(f"{zone}-blok: {action_text}")
@@ -178,8 +178,6 @@ async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
         await state.update_data(order_id=order_id, message_id=callback.message.message_id)
         await state.set_state(DeliveryProcess.waiting_for_load_photo)
         await callback.message.answer("📸 Mashinaga ortilgan yuk rasmini yuboring.")
-    
-    await callback.answer()
 
 @router.message(DeliveryProcess.waiting_for_load_photo, F.photo)
 async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
@@ -188,39 +186,56 @@ async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
     photo_id = message.photo[-1].file_id
     t = get_current_time()
     
-    save_order_step({
-        'order_id': order_id,
-        'step_name': 'photo_load',
-        'time_text': t,
-        'photo_file_id': photo_id
-    })
-            
-    await update_group_message(bot, order_id)
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'photo_load',
+            'time_text': t,
+            'photo_file_id': photo_id
+        })
+        await update_group_message(bot, order_id)
+        
+    asyncio.create_task(bg_task())
     
     await message.answer("Rasm qabul qilindi. Yo'lga chiqqaningizda tugmani bosing.", reply_markup=kb.get_driving_kb(order_id))
     await state.clear()
 
 @router.callback_query(F.data.startswith("start_drive_"))
 async def start_drive(callback: CallbackQuery, bot: Bot):
+    await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("start_drive_")[1]
     t = get_current_time()
-    save_order_step({'order_id': order_id, 'step_name': 'start_drive', 'time_text': t})
-    await update_group_message(bot, order_id)
+    
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'start_drive', 'time_text': t})
+        await update_group_message(bot, order_id)
+        order = await asyncio.to_thread(get_order, order_id)
+        if order:
+            await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YO‘LDA', order_id)
+            
+    asyncio.create_task(bg_task())
+    
     await callback.message.edit_text("Siz yo'ldasiz. Manzilga yetib kelgach tugmani bosing.", reply_markup=kb.get_arrived_kb(order_id))
-    await callback.answer()
 
 @router.callback_query(F.data.startswith("arrived_"))
 async def arrived(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("arrived_")[1]
     t = get_current_time()
-    save_order_step({'order_id': order_id, 'step_name': 'arrived', 'time_text': t})
-    await update_group_message(bot, order_id)
+    
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'arrived', 'time_text': t})
+        await update_group_message(bot, order_id)
+        order = await asyncio.to_thread(get_order, order_id)
+        if order:
+            await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YETIB BORDI', order_id)
+            
+    asyncio.create_task(bg_task())
     
     await callback.message.edit_text("📍 Manzilga yetib keldingiz.")
     await state.update_data(order_id=order_id)
     await state.set_state(DeliveryProcess.waiting_for_location)
     await callback.message.answer("📍 Iltimos, lokatsiyani yuboring.", reply_markup=kb.get_request_location_kb())
-    await callback.answer()
 
 @router.message(DeliveryProcess.waiting_for_location, F.location)
 async def process_location(message: Message, state: FSMContext, bot: Bot):
@@ -230,15 +245,17 @@ async def process_location(message: Message, state: FSMContext, bot: Bot):
     lng = message.location.longitude
     t = get_current_time()
     
-    save_order_step({
-        'order_id': order_id,
-        'step_name': 'location',
-        'time_text': t,
-        'location_lat': lat,
-        'location_lng': lng
-    })
-            
-    await update_group_message(bot, order_id)
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'location',
+            'time_text': t,
+            'location_lat': lat,
+            'location_lng': lng
+        })
+        # Note: we skip group update here to reduce spam
+        
+    asyncio.create_task(bg_task())
     
     await state.set_state(DeliveryProcess.waiting_for_unload_photo)
     await message.answer("Lokatsiya qabul qilindi. 📸 Manzilga yetib kelganingizdagi yuk/mashina rasmini yuboring.", reply_markup=kb.remove_reply_kb())
@@ -250,53 +267,86 @@ async def process_obj_photo(message: Message, state: FSMContext, bot: Bot):
     photo_id = message.photo[-1].file_id
     t = get_current_time()
     
-    save_order_step({
-        'order_id': order_id,
-        'step_name': 'photo_obj',
-        'time_text': t,
-        'photo_file_id': photo_id
-    })
-            
-    await update_group_message(bot, order_id)
+    async def bg_task():
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'photo_obj',
+            'time_text': t,
+            'photo_file_id': photo_id
+        })
+        # Note: we skip group update here to reduce spam too
+        
+    asyncio.create_task(bg_task())
     
     await message.answer("Rasm qabul qilindi. Yuk tushirib bo'lingach tugmani bosing.", reply_markup=kb.get_finish_kb(order_id))
     await state.clear()
 
 @router.callback_query(F.data.startswith("finish_"))
 async def finish_delivery(callback: CallbackQuery, bot: Bot):
+    await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("finish_")[1]
     t = get_current_time()
-    save_order_step({'order_id': order_id, 'step_name': 'finish', 'time_text': t})
-    update_order(order_id, {'current_status': 'DONE', 'completed_at': datetime.now(tz).isoformat()})
-    await update_group_message(bot, order_id)
+    
     await callback.message.edit_text(f"✅ Yetkazib berish #{order_id} muvaffaqiyatli yakunlandi ({t})!")
-    await callback.answer()
     
-    # Send MediaGroup to the channel if applicable
-    if should_send_to_group():
-        steps = get_order_steps(order_id)
-        photos = []
-        for s in steps:
-            if s['step_name'] in ['photo_load', 'photo_obj'] and s.get('photo_file_id'):
-                caption = "Yuklangan rasm" if s['step_name'] == 'photo_load' else "Manzildagi rasm"
-                photos.append(InputMediaPhoto(media=s['photo_file_id'], caption=f"{caption} (#{order_id})"))
+    async def bg_task():
+        now = datetime.now(tz)
         
-        if photos:
+        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'finish', 'time_text': t})
+        order = await asyncio.to_thread(get_order, order_id)
+        
+        # Calculate duration
+        start_time_obj = None
+        duration_minutes = None
+        if order and order.get('start_time'):
             try:
-                await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=photos)
-            except Exception as e:
-                logger.error(f"Error sending media group: {e}")
-    
-    from app.sheets import get_sheets_service
-    from app.config import GOOGLE_SHEET_ID
-    try:
-        sheets = get_sheets_service()
-        if sheets:
-            res = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F').execute()
-            vals = res.get('values', [])
-            for i, row in enumerate(vals):
-                if len(row) > 0 and row[0].strip() == order_id:
-                    update_order_status(i + 1, 'DONE')
-                    break
-    except Exception as e:
-        logger.error(f"Error updating sheet to DONE: {e}")
+                start_time_obj = datetime.fromisoformat(order['start_time'])
+                duration_td = now - start_time_obj
+                duration_minutes = int(duration_td.total_seconds() / 60)
+            except:
+                pass
+
+        update_payload = {
+            'current_status': 'DONE', 
+            'completed_at': now.isoformat(),
+            'finish_time': now.isoformat()
+        }
+        if duration_minutes is not None:
+            update_payload['duration_minutes'] = duration_minutes
+            
+        await asyncio.to_thread(update_order, order_id, update_payload)
+        
+        if order:
+            await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BO‘SH', '')
+
+        await update_group_message(bot, order_id)
+        
+        if should_send_to_group():
+            steps = await asyncio.to_thread(get_order_steps, order_id)
+            photos = []
+            for s in steps:
+                if s['step_name'] in ['photo_load', 'photo_obj'] and s.get('photo_file_id'):
+                    caption = "Yuklangan rasm" if s['step_name'] == 'photo_load' else "Manzildagi rasm"
+                    photos.append(InputMediaPhoto(media=s['photo_file_id'], caption=f"{caption} (#{order_id})"))
+            
+            if photos:
+                try:
+                    await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=photos)
+                except Exception as e:
+                    logger.error(f"Error sending media group: {e}")
+        
+        from app.sheets import get_sheets_service
+        from app.config import GOOGLE_SHEET_ID
+        try:
+            sheets = await asyncio.to_thread(get_sheets_service)
+            if sheets:
+                res = await asyncio.to_thread(sheets.values().get, spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F')
+                vals = res.get('values', [])
+                for i, row in enumerate(vals):
+                    if len(row) > 0 and row[0].strip() == order_id:
+                        await asyncio.to_thread(update_order_status, i + 1, 'DONE')
+                        break
+        except Exception as e:
+            logger.error(f"Error updating sheet to DONE: {e}")
+
+    asyncio.create_task(bg_task())

@@ -52,6 +52,13 @@ Logistika va yetkazib berishlarni nazorat qilish uchun Telegram-bot. Google Shee
    - D: cargo
    - E: comment
    - F: status
+4. `drivers_status` nomli list yarating (Bot avtomatik to'ldirib boradi, faqat list nomini yaratib qo'ying):
+   - A: car_number
+   - B: driver_name
+   - C: telegram_id
+   - D: status
+   - E: current_order_id
+   - F: updated_at
 
 ### 4. Supabase va Google Service Account
 - [Supabase](https://supabase.com/) da proyekt yarating va SQL Editor da `supabase.sql` dagi kodni ishga tushiring.

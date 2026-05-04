@@ -14,6 +14,7 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="🚗 Mashinalar bo'yicha tarix", callback_data="adm_hist_car")],
         [InlineKeyboardButton(text="👤 Haydovchilar bo'yicha tarix", callback_data="adm_hist_drv")],
         [InlineKeyboardButton(text="📊 Bugungi aktiv vazifalar", callback_data="adm_active")],
+        [InlineKeyboardButton(text="🚗 Mashinalar holati", callback_data="adm_cars_status")],
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_close")]
     ])
 
