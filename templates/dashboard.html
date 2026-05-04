@@ -16,251 +16,196 @@
             overflow-x: hidden;
         }
 
-        /* ── Header ──────────────────────────── */
-        .header {
+        /* Header */
+        .hdr {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 14px 32px;
+            padding: 14px 28px;
             background: #1a1a1a;
             border-bottom: 3px solid #e97609;
         }
-        .logo { font-size: clamp(22px, 2.8vw, 40px); font-weight: 900; }
+        .logo { font-size: clamp(22px, 2.5vw, 38px); font-weight: 900; }
         .logo span { color: #e97609; }
-        .header-right { display: flex; align-items: center; gap: 20px; }
-        .clock {
-            font-size: clamp(18px, 2.2vw, 36px);
-            font-weight: 900; color: #e97609;
-            font-variant-numeric: tabular-nums;
-        }
-        .live-dot {
-            width: 10px; height: 10px; border-radius: 50%;
-            background: #28a745;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+        .hdr-r { display: flex; align-items: center; gap: 16px; }
+        .clk { font-size: clamp(18px, 2vw, 34px); font-weight: 900; color: #e97609; font-variant-numeric: tabular-nums; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #28a745; animation: p 2s infinite; }
+        @keyframes p { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-        /* ── Stats Row ───────────────────────── */
-        .stats {
+        /* Stats */
+        .sts {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 14px;
-            padding: 16px 32px;
+            gap: 12px;
+            padding: 16px 28px;
         }
-        .stat-card {
+        .sc {
             background: #1c1c1c;
             border-radius: 14px;
-            padding: 20px;
+            padding: 18px 12px;
             text-align: center;
             border-bottom: 4px solid #444;
         }
-        .stat-icon { font-size: clamp(26px, 2.5vw, 42px); margin-bottom: 6px; }
-        .stat-label {
-            font-size: clamp(11px, 1vw, 16px);
-            color: #888; text-transform: uppercase;
-            font-weight: 700; letter-spacing: 1px;
-            margin-bottom: 6px;
-        }
-        .stat-num {
-            font-size: clamp(30px, 3.5vw, 56px);
-            font-weight: 900; line-height: 1;
-        }
-        .s-done { border-color: #28a745; } .s-done .stat-num { color: #28a745; }
-        .s-active { border-color: #007bff; } .s-active .stat-num { color: #007bff; }
-        .s-cars { border-color: #e97609; } .s-cars .stat-num { color: #e97609; }
-        .s-fail { border-color: #dc3545; } .s-fail .stat-num { color: #dc3545; }
+        .sc-i { font-size: clamp(24px, 2.2vw, 38px); margin-bottom: 4px; }
+        .sc-l { font-size: clamp(10px, .95vw, 15px); color: #888; text-transform: uppercase; font-weight: 700; letter-spacing: .5px; margin-bottom: 6px; }
+        .sc-n { font-size: clamp(28px, 3.2vw, 52px); font-weight: 900; line-height: 1; }
 
-        .cars-split {
-            display: flex; justify-content: center; align-items: baseline; gap: 12px;
-            font-size: clamp(26px, 3vw, 48px); font-weight: 900;
-        }
-        .cars-split .sub {
-            font-size: clamp(13px, 1.2vw, 20px);
-            font-weight: 700;
-        }
-        .c-band { color: #ffc107; }
-        .c-free { color: #28a745; }
+        .sd { border-color: #28a745; } .sd .sc-n { color: #28a745; }
+        .sa { border-color: #007bff; } .sa .sc-n { color: #007bff; }
+        .sv { border-color: #e97609; }
+        .sf { border-color: #dc3545; } .sf .sc-n { color: #dc3545; }
 
-        /* ── Main ────────────────────────────── */
+        .car-nums {
+            display: flex; justify-content: center; align-items: baseline; gap: 10px;
+            font-size: clamp(24px, 2.8vw, 44px); font-weight: 900;
+        }
+        .car-nums .lbl { font-size: clamp(11px, 1vw, 17px); font-weight: 700; }
+        .clr-b { color: #ffc107; }
+        .clr-f { color: #28a745; }
+
+        /* Main */
         .main {
             display: grid;
             grid-template-columns: 3fr 1fr;
-            gap: 16px;
-            padding: 0 32px 24px;
+            gap: 14px;
+            padding: 0 28px 20px;
+        }
+        .pnl { background: #181818; border-radius: 14px; padding: 16px; }
+        .pnl-t {
+            font-size: clamp(14px, 1.3vw, 22px);
+            font-weight: 700; margin-bottom: 12px;
+            border-left: 4px solid #e97609; padding-left: 10px;
         }
 
-        .panel {
-            background: #181818;
-            border-radius: 14px;
-            padding: 18px;
-        }
-        .panel-title {
-            font-size: clamp(15px, 1.4vw, 24px);
-            font-weight: 700;
-            margin-bottom: 14px;
-            border-left: 4px solid #e97609;
-            padding-left: 10px;
-        }
-
-        /* ── Car Grid ────────────────────────── */
-        .cars-grid {
+        /* Car grid */
+        .cg {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
             gap: 10px;
         }
-        .car {
+        .cc {
             background: #242424;
             border-radius: 10px;
             padding: 12px;
             border-left: 6px solid #444;
             display: flex; flex-direction: column;
             justify-content: space-between;
-            min-height: 90px;
+            min-height: 88px;
         }
-        .car-num { font-size: clamp(16px, 1.6vw, 26px); font-weight: 900; letter-spacing: 1px; }
-        .car-drv {
-            font-size: clamp(11px, .9vw, 15px);
-            color: #999; margin-top: 3px;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .car-bot { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6px; }
-        .badge {
-            font-size: clamp(10px, .8vw, 13px);
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 5px;
-            color: #fff;
-        }
+        .cc-n { font-size: clamp(15px, 1.5vw, 24px); font-weight: 900; letter-spacing: 1px; }
+        .cc-d { font-size: clamp(10px, .85vw, 14px); color: #999; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cc-b { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6px; }
+        .bdg { font-size: clamp(9px, .75vw, 12px); font-weight: 700; padding: 3px 7px; border-radius: 5px; color: #fff; }
+        .cc-o { font-size: clamp(12px, 1vw, 18px); font-weight: 700; color: #aaa; }
 
         /* Status colors */
-        .car-free { border-color: #28a745; }
-        .car-free .badge { background: #28a745; }
-        .car-busy { border-color: #ffc107; }
-        .car-busy .badge { background: #ffc107; color: #000; }
+        .cc-free { border-color: #28a745; } .cc-free .bdg { background: #28a745; }
+        .cc-busy { border-color: #ffc107; } .cc-busy .bdg { background: #ffc107; color: #000; }
 
-        /* ── Updates ─────────────────────────── */
-        .upd-list {
-            display: flex; flex-direction: column; gap: 8px;
-            max-height: 55vh; overflow-y: auto;
-        }
-        .upd-list::-webkit-scrollbar { width: 4px; }
-        .upd-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        .upd {
-            background: #242424;
-            padding: 10px 12px;
-            border-radius: 8px;
-            border-left: 3px solid #555;
-        }
-        .upd-id { font-weight: 700; font-size: clamp(12px, 1vw, 16px); color: #e97609; }
-        .upd-car { font-size: clamp(11px, .9vw, 14px); color: #bbb; margin-top: 2px; }
-        .upd-addr { font-size: clamp(10px, .8vw, 13px); color: #777; margin-top: 1px; }
-        .upd-st { font-size: clamp(10px, .8vw, 13px); color: #666; margin-top: 1px; }
-        .empty { color: #444; text-align: center; padding: 32px 0; font-size: 15px; }
+        /* Updates */
+        .ul { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; }
+        .ul::-webkit-scrollbar { width: 4px; }
+        .ul::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .ui { background: #242424; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #555; }
+        .ui-id { font-weight: 700; font-size: clamp(11px, .95vw, 15px); color: #e97609; }
+        .ui-c { font-size: clamp(10px, .85vw, 13px); color: #bbb; margin-top: 2px; }
+        .ui-a { font-size: clamp(9px, .75vw, 12px); color: #777; margin-top: 1px; }
+        .ui-s { font-size: clamp(9px, .75vw, 12px); color: #666; margin-top: 1px; }
+        .emp { color: #444; text-align: center; padding: 28px 0; font-size: 14px; }
 
-        /* ── Responsive ──────────────────────── */
         @media (max-width: 1100px) {
-            .stats { grid-template-columns: repeat(2, 1fr); }
+            .sts { grid-template-columns: repeat(2, 1fr); }
             .main { grid-template-columns: 1fr; }
         }
         @media (max-width: 600px) {
-            .stats { grid-template-columns: 1fr; }
-            .header, .stats, .main { padding-left: 14px; padding-right: 14px; }
+            .sts { grid-template-columns: 1fr; }
+            .hdr, .sts, .main { padding-left: 12px; padding-right: 12px; }
         }
     </style>
 </head>
 <body>
-    <div class="header">
+    <div class="hdr">
         <div class="logo">dunya<span>bunya</span></div>
-        <div class="header-right">
-            <div class="live-dot"></div>
-            <div class="clock" id="clock">--:--:--</div>
+        <div class="hdr-r">
+            <div class="dot"></div>
+            <div class="clk" id="clk">--:--:--</div>
         </div>
     </div>
 
-    <div class="stats">
-        <div class="stat-card s-done">
-            <div class="stat-icon">✅</div>
-            <div class="stat-label">Bugun yetkazildi</div>
-            <div class="stat-num">{{ stats.finished_today }}</div>
+    <div class="sts">
+        <div class="sc sd">
+            <div class="sc-i">✅</div>
+            <div class="sc-l">Bugun yetkazildi</div>
+            <div class="sc-n">{{ stats.finished_today }}</div>
         </div>
-        <div class="stat-card s-active">
-            <div class="stat-icon">🚚</div>
-            <div class="stat-label">Aktiv vazifalar</div>
-            <div class="stat-num">{{ stats.active }}</div>
+        <div class="sc sa">
+            <div class="sc-i">🚚</div>
+            <div class="sc-l">Band mashinalar</div>
+            <div class="sc-n">{{ busy }}</div>
         </div>
-        <div class="stat-card s-cars">
-            <div class="stat-icon">🚗</div>
-            <div class="stat-label">Mashinalar ({{ total }} ta)</div>
-            <div class="cars-split">
-                <span class="c-band">{{ busy }}</span><span class="sub c-band">band</span>
-                <span style="color:#555;">/</span>
-                <span class="c-free">{{ free }}</span><span class="sub c-free">bo'sh</span>
+        <div class="sc sv">
+            <div class="sc-i">🚗</div>
+            <div class="sc-l">Mashinalar ({{ total }})</div>
+            <div class="car-nums">
+                <span class="clr-b">{{ busy }}</span><span class="lbl clr-b">band</span>
+                <span style="color:#555">/</span>
+                <span class="clr-f">{{ free }}</span><span class="lbl clr-f">bo'sh</span>
             </div>
         </div>
-        <div class="stat-card s-fail">
-            <div class="stat-icon">⚠️</div>
-            <div class="stat-label">Muammoli</div>
-            <div class="stat-num">{{ stats.failed }}</div>
+        <div class="sc sf">
+            <div class="sc-i">⚠️</div>
+            <div class="sc-l">Muammoli</div>
+            <div class="sc-n">{{ stats.failed }}</div>
         </div>
     </div>
 
     <div class="main">
-        <div class="panel">
-            <div class="panel-title">🚗 Mashinalar holati</div>
-            <div class="cars-grid">
+        <div class="pnl">
+            <div class="pnl-t">🚗 Mashinalar holati</div>
+            <div class="cg">
                 {% for d in drivers %}
-                    {% set s = (d.status or '') | upper %}
-                    {% set cls = 'car-busy' %}
-                    {% if 'BO' in s and 'SH' in s %}
-                        {% set cls = 'car-free' %}
-                    {% endif %}
-                    <div class="car {{ cls }}">
+                    {% set cls = 'cc-free' if d.status == "BO'SH" else 'cc-busy' %}
+                    <div class="cc {{ cls }}">
                         <div>
-                            <div class="car-num">{{ d.car_number }}</div>
-                            <div class="car-drv">{{ d.driver_name }}</div>
+                            <div class="cc-n">{{ d.car_number }}</div>
+                            <div class="cc-d">{{ d.driver_name }}</div>
                         </div>
-                        <div class="car-bot">
-                            <div class="badge">{{ d.status }}</div>
+                        <div class="cc-b">
+                            <div class="bdg">{{ d.raw_status }}</div>
+                            {% if d.current_order_id %}<div class="cc-o">#{{ d.current_order_id }}</div>{% endif %}
                         </div>
                     </div>
                 {% endfor %}
                 {% if not drivers %}
-                    <div class="empty">Mashinalar topilmadi</div>
+                    <div class="emp">Mashinalar topilmadi</div>
                 {% endif %}
             </div>
         </div>
 
-        <div class="panel">
-            <div class="panel-title">⏱ Oxirgi yangilanishlar</div>
-            <div class="upd-list">
+        <div class="pnl">
+            <div class="pnl-t">⏱ Oxirgi yangilanishlar</div>
+            <div class="ul">
                 {% for u in stats.updates %}
-                <div class="upd">
-                    <div class="upd-id">#{{ u.order_id }}</div>
-                    <div class="upd-car">🚗 {{ u.car_number }} · {{ u.driver_name }}</div>
-                    {% if u.address %}<div class="upd-addr">📍 {{ u.address }}</div>{% endif %}
-                    <div class="upd-st">{{ u.current_status }}</div>
+                <div class="ui">
+                    <div class="ui-id">#{{ u.order_id }}</div>
+                    <div class="ui-c">🚗 {{ u.car_number }} · {{ u.driver_name }}</div>
+                    {% if u.address %}<div class="ui-a">📍 {{ u.address }}</div>{% endif %}
+                    <div class="ui-s">{{ u.current_status }}</div>
                 </div>
                 {% endfor %}
                 {% if not stats.updates %}
-                    <div class="empty">Hozircha ma'lumot yo'q</div>
+                    <div class="emp">Hozircha ma'lumot yo'q</div>
                 {% endif %}
             </div>
         </div>
     </div>
 
     <script>
-        // Tashkent time (UTC+5) — always correct regardless of user browser timezone
-        function updateClock() {
-            var now = new Date();
-            var utc = now.getTime() + now.getTimezoneOffset() * 60000;
-            var tashkent = new Date(utc + 5 * 3600000);
-            var h = ('0' + tashkent.getHours()).slice(-2);
-            var m = ('0' + tashkent.getMinutes()).slice(-2);
-            var s = ('0' + tashkent.getSeconds()).slice(-2);
-            document.getElementById('clock').textContent = h + ':' + m + ':' + s;
+        function tick(){
+            var n=new Date(), u=n.getTime()+n.getTimezoneOffset()*60000, t=new Date(u+5*3600000);
+            document.getElementById('clk').textContent=
+                ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
         }
-        setInterval(updateClock, 1000);
-        updateClock();
-        // Auto-refresh every 10 seconds
-        setTimeout(function() { location.reload(); }, 10000);
+        setInterval(tick,1000); tick();
+        setTimeout(function(){location.reload()},10000);
     </script>
 </body>
 </html>

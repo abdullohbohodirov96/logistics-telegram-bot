@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
-# Cache the Sheets service object — building it every call is ~300ms wasted
+# Cache the Sheets service object
 _sheets_service = None
 
 def get_sheets_service():
@@ -29,6 +29,9 @@ def get_sheets_service():
         return None
 
 def get_drivers():
+    """Read driver list from drivers sheet.
+    Columns: A=car_number, B=driver_name, C=telegram_id, D=status, E=current_order_id, F=started_at, G=updated_at
+    """
     sheets = get_sheets_service()
     if not sheets: return {}
     
@@ -108,6 +111,15 @@ def update_order_status(row_index: int, status: str):
         logger.error(f"Error updating order status for row {row_index}: {e}")
 
 def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: int, status: str, current_order_id: str):
+    """Update car status directly in drivers sheet (columns D-G).
+    
+    drivers sheet layout:
+    A=car_number | B=driver_name | C=telegram_id | D=status | E=current_order_id | F=started_at | G=updated_at
+    
+    Bot calls this with:
+      status='BAND', current_order_id='ORD-123' when delivery starts
+      status="BO'SH", current_order_id='' when delivery finishes
+    """
     sheets = get_sheets_service()
     if not sheets: return
     
@@ -115,48 +127,59 @@ def update_driver_status_sheet(car_number: str, driver_name: str, telegram_id: i
         from datetime import datetime
         import pytz
         tz = pytz.timezone('Asia/Tashkent')
-        updated_at = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+        now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
         
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers_status!A:F').execute()
+        # Find the car row in drivers sheet
+        result = sheets.values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='drivers!A:G'
+        ).execute()
         values = result.get('values', [])
         
         row_idx = -1
         for i, row in enumerate(values):
-            if len(row) > 0 and row[0].strip() == car_number:
-                row_idx = i + 1
+            if i == 0:
+                continue  # skip header
+            if len(row) > 0 and row[0].strip().upper().replace(' ', '') == car_number.strip().upper().replace(' ', ''):
+                row_idx = i + 1  # 1-based
                 break
-                
+        
+        if row_idx == -1:
+            logger.warning(f"Car {car_number} not found in drivers sheet, cannot update status")
+            # Still upsert to Supabase
+            upsert_driver_status(car_number, driver_name, telegram_id, status, current_order_id)
+            return
+        
+        # Update columns D, E, F, G (status, current_order_id, started_at, updated_at)
+        started_at = now_str if status == 'BAND' else ''
+        
         body = {
-            'values': [[car_number, driver_name, str(telegram_id), status, current_order_id, updated_at]]
+            'values': [[status, current_order_id, started_at, now_str]]
         }
+        sheets.values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'drivers!D{row_idx}:G{row_idx}',
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
         
-        if row_idx != -1:
-            sheets.values().update(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=f'drivers_status!A{row_idx}:F{row_idx}',
-                valueInputOption='USER_ENTERED',
-                body=body
-            ).execute()
-        else:
-            sheets.values().append(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range='drivers_status!A:F',
-                valueInputOption='USER_ENTERED',
-                insertDataOption='INSERT_ROWS',
-                body=body
-            ).execute()
+        logger.info(f"Updated drivers sheet row {row_idx}: {car_number} -> {status} / order={current_order_id}")
         
-        # Also upsert to Supabase
+        # Also upsert to Supabase for history
         upsert_driver_status(car_number, driver_name, telegram_id, status, current_order_id)
         
     except Exception as e:
-        logger.error(f"Error updating driver status: {e}")
+        logger.error(f"Error updating driver status in drivers sheet: {e}")
 
 def get_drivers_status():
+    """Read driver statuses from drivers sheet (columns A-G)."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers_status!A2:F').execute()
+        result = sheets.values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='drivers!A2:G'
+        ).execute()
         return result.get('values', [])
     except Exception as e:
         logger.error(f"Error getting drivers status: {e}")
