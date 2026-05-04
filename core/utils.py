@@ -7,6 +7,10 @@ tz = pytz.timezone(TIMEZONE)
 def get_now():
     return datetime.now(tz)
 
+def get_current_time():
+    """Returns datetime object for Asia/Tashkent."""
+    return get_now()
+
 def parse_dt(dt_str):
     if not dt_str: return None
     try:
@@ -26,6 +30,7 @@ def parse_dt(dt_str):
 
 def format_time(dt):
     if not dt: return "Noma'lum"
+    if isinstance(dt, str): return dt
     return dt.strftime("%H:%M")
 
 def format_duration(minutes: int):

@@ -15,7 +15,7 @@ import core.keyboards as kb
 router = Router()
 logger = logging.getLogger(__name__)
 
-from core.utils import get_now, parse_dt, format_time, format_duration, get_order_start_time
+from core.utils import get_now, get_current_time, parse_dt, format_time, format_duration, get_order_start_time
 
 def should_send_to_group():
     return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
@@ -78,8 +78,8 @@ async def update_group_message(bot: Bot, order_id: str):
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"
     
-    if order.get('transit_status'):
-        text += f"Transit: {order['transit_status']}\n"
+    if order.get('transit_exists'):
+        text += f"Transit: Ha\n"
 
     text += "\n"
 
@@ -170,7 +170,7 @@ async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
     val = parts[2]
     order_id = parts[3]
     
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {
@@ -204,14 +204,12 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext):
     order_id = parts[2]
     
     transit_exists = (val == 'y')
-    transit_status = "Ha, bor" if transit_exists else "Yo'q"
-    
     await asyncio.to_thread(update_order, order_id, {
-        'transit_exists': transit_exists,
-        'transit_status': transit_status
+        'transit_exists': transit_exists
     })
     
-    await callback.message.edit_text(f"Transit: {transit_status}")
+    status_text = "Ha" if transit_exists else "Yo'q"
+    await callback.message.edit_text(f"Transit: {status_text}")
     
     await state.update_data(order_id=order_id)
     await state.set_state(DeliveryProcess.waiting_for_load_photo)
@@ -222,7 +220,7 @@ async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     order_id = data.get('order_id')
     photo_id = message.photo[-1].file_id
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {
@@ -242,7 +240,7 @@ async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
 async def start_drive(callback: CallbackQuery, bot: Bot):
     await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("start_drive_")[1]
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'start_drive', 'time_text': t})
@@ -259,7 +257,7 @@ async def start_drive(callback: CallbackQuery, bot: Bot):
 async def arrived(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("arrived_")[1]
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'arrived', 'time_text': t})
@@ -281,7 +279,7 @@ async def process_location(message: Message, state: FSMContext, bot: Bot):
     order_id = data.get('order_id')
     lat = message.location.latitude
     lng = message.location.longitude
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {
@@ -302,7 +300,7 @@ async def process_obj_photo(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     order_id = data.get('order_id')
     photo_id = message.photo[-1].file_id
-    t = get_current_time()
+    t = format_time(get_now())
     
     async def bg_task():
         await asyncio.to_thread(save_order_step, {
