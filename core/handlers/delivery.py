@@ -20,21 +20,29 @@ tz = pytz.timezone(TIMEZONE)
 def get_current_time():
     return datetime.now(tz).strftime("%H:%M")
 
+def format_duration(minutes: int):
+    if minutes is None: return ""
+    h = minutes // 60
+    m = minutes % 60
+    return f"{f'{h} soat ' if h > 0 else ''}{m} daqiqa"
+
 def should_send_to_group():
     return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
 
 async def update_group_message(bot: Bot, order_id: str):
+    """Updates the group/channel message with the latest status."""
     if not should_send_to_group():
         return
         
     order = await asyncio.to_thread(get_order, order_id)
     if not order or not order.get('group_message_id'):
+        logger.warning(f"No group_message_id for order {order_id}")
         return
 
     steps = await asyncio.to_thread(get_order_steps, order_id)
     
-    start_time = "Noma'lum"
-    end_time = "Noma'lum"
+    start_time_text = "Noma'lum"
+    end_time_text = "Noma'lum"
     last_step_text = ""
     loc_lat = None
     loc_lng = None
@@ -47,7 +55,7 @@ async def update_group_message(bot: Bot, order_id: str):
         name = s['step_name']
         t = s.get('time_text', '')
         if name == 'take_delivery':
-            start_time = t
+            start_time_text = t
             last_step_text = f"Vazifani oldi — {t}"
         elif name.startswith('zone_'):
             z = name.split('_')[1]
@@ -67,7 +75,7 @@ async def update_group_message(bot: Bot, order_id: str):
             photo_obj = "bor"
             last_step_text = f"Manzildagi rasm yuborildi — {t}"
         elif name == 'finish':
-            end_time = t
+            end_time_text = t
             is_done = True
             
     text = f"🚚 Yetkazib berish #{order_id}\n"
@@ -83,23 +91,28 @@ async def update_group_message(bot: Bot, order_id: str):
 
     if is_done:
         text += f"Holat: ✅ Yakunlandi\n"
-        text += f"Oldi: {start_time}\n"
-        text += f"Yetkazdi: {end_time}\n"
+        text += f"Oldi: {start_time_text}\n"
+        text += f"Yetkazdi: {end_time_text}\n"
+        if order.get('duration_minutes'):
+            text += f"Sarflangan vaqt: {format_duration(order['duration_minutes'])}\n"
         if loc_lat and loc_lng:
             text += f"Lokatsiya: https://maps.google.com/?q={loc_lat},{loc_lng}\n"
         text += f"\nRasmlar:\n📸 Yuklangan rasm: {photo_load}\n📸 Manzildagi rasm: {photo_obj}\n"
     else:
         text += f"Holat: 🚚 Yo‘lda\n"
-        text += f"Oldi: {start_time}\n"
+        text += f"Oldi: {start_time_text}\n"
         text += f"Oxirgi bosqich: {last_step_text}\n"
 
     try:
+        # Check if the message has a caption (if it was sent as a photo/media) or just text
+        # For now, we assume it's sent as a text message in accept flow.
         await bot.edit_message_text(
             chat_id=GROUP_CHAT_ID,
             message_id=order['group_message_id'],
             text=text,
             disable_web_page_preview=True
         )
+        logger.info(f"Updated group message for order {order_id}")
     except Exception as e:
         logger.error(f"Error editing group message: {e}")
 
@@ -120,7 +133,7 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
         'time_text': t
     })
 
-    # Run background tasks (Sheets + Group notification)
+    # Initial group message
     async def bg_task():
         await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BAND', order_id)
         
@@ -136,7 +149,12 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
 
             try:
                 msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
-                await asyncio.to_thread(update_order, order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
+                await asyncio.to_thread(update_order, order_id, {
+                    'group_message_id': msg.message_id, 
+                    'current_status': 'take_delivery', 
+                    'start_time': datetime.now(tz).isoformat()
+                })
+                logger.info(f"Sent initial group message for {order_id}, ID: {msg.message_id}")
             except Exception as e:
                 logger.error(f"Error sending to group: {e}")
         else:
@@ -310,8 +328,6 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
     order_id = callback.data.split("finish_")[1]
     t = get_current_time()
     
-    await callback.message.edit_text(f"✅ Yetkazib berish #{order_id} muvaffaqiyatli yakunlandi ({t})!")
-    
     async def bg_task():
         now = datetime.now(tz)
         
@@ -321,11 +337,13 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
         # Calculate duration
         start_time_obj = None
         duration_minutes = None
+        start_time_str = "Noma'lum"
         if order and order.get('start_time'):
             try:
                 start_time_obj = datetime.fromisoformat(order['start_time'])
                 duration_td = now - start_time_obj
                 duration_minutes = int(duration_td.total_seconds() / 60)
+                start_time_str = start_time_obj.strftime("%H:%M")
             except:
                 pass
 
@@ -343,6 +361,17 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
 
         await update_group_message(bot, order_id)
         
+        # Driver finish message
+        finish_text = f"✅ Yetkazib berish #{order_id} yakunlandi\n\n"
+        finish_text += f"Boshlagan vaqti: {start_time_str}\n"
+        finish_text += f"Tugagan vaqti: {t}\n"
+        if duration_minutes is not None:
+            finish_text += f"Ketgan vaqt: {format_duration(duration_minutes)}"
+            
+        await callback.message.edit_text(finish_text)
+        logger.info(f"Order {order_id} finished. Duration: {duration_minutes} min.")
+
+        # Media to group
         if should_send_to_group():
             steps = await asyncio.to_thread(get_order_steps, order_id)
             photos = []
@@ -357,6 +386,7 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
                 except Exception as e:
                     logger.error(f"Error sending media group: {e}")
         
+        # Sheet status to DONE
         from core.sheets import get_sheets_service
         from core.config import GOOGLE_SHEET_ID
         try:

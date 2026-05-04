@@ -8,14 +8,15 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from core.config import ADMIN_IDS, TIMEZONE
-from core.db import get_history, get_unique_cars, get_unique_drivers, get_active_orders
+from core.db import get_history, get_active_orders
 from core.cache import cache_get, cache_set
 import core.keyboards as kb
-from core.sheets import get_drivers_status
+from core.sheets import get_drivers_status, get_all_drivers_list, get_all_cars_list
 from core.states import AdminProcess
 from core.handlers.history import format_delivery_short, format_delivery_detailed
 
 router = Router()
+logger = logging.getLogger(__name__)
 tz = pytz.timezone(TIMEZONE)
 
 @router.message(F.text == "🛠 Admin panel")
@@ -39,14 +40,14 @@ async def back_to_admin(callback: CallbackQuery, state: FSMContext):
 async def show_cars(callback: CallbackQuery):
     await callback.answer()
     
-    # Use cached car list (TTL 60s)
-    cars = cache_get('unique_cars', 60)
+    # Use cached car list (TTL 30s as requested)
+    cars = cache_get('master_cars', 30)
     if cars is None:
-        cars = await asyncio.to_thread(get_unique_cars)
-        cache_set('unique_cars', cars)
+        cars = await asyncio.to_thread(get_all_cars_list)
+        cache_set('master_cars', cars)
     
     if not cars:
-        await callback.message.edit_text("Mashinalar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Mashinalar topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
     await callback.message.edit_text("Qaysi mashina bo'yicha tarixni ko'rmoqchisiz?", reply_markup=kb.get_cars_kb(cars))
 
@@ -54,16 +55,20 @@ async def show_cars(callback: CallbackQuery):
 async def show_drivers(callback: CallbackQuery):
     await callback.answer()
     
-    # Use cached driver list (TTL 60s)
-    drivers = cache_get('unique_drivers', 60)
+    # Use cached driver list (TTL 30s)
+    drivers = cache_get('master_drivers', 30)
     if drivers is None:
-        drivers = await asyncio.to_thread(get_unique_drivers)
-        cache_set('unique_drivers', drivers)
+        drivers = await asyncio.to_thread(get_all_drivers_list)
+        cache_set('master_drivers', drivers)
     
     if not drivers:
-        await callback.message.edit_text("Haydovchilar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Haydovchilar topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
-    await callback.message.edit_text("Qaysi haydovchi bo'yicha tarixni ko'rmoqchisiz?", reply_markup=kb.get_drivers_kb(drivers))
+        
+    # Convert list of tuples to dict for compatibility with existing kb.get_drivers_kb
+    # Actually, let's update kb.get_drivers_kb to handle list of tuples if needed, or just convert here.
+    drivers_dict = {tid: name for name, tid in drivers}
+    await callback.message.edit_text("Qaysi haydovchi bo'yicha tarixni ko'rmoqchisiz?", reply_markup=kb.get_drivers_kb(drivers_dict))
 
 @router.callback_query(F.data == "adm_hist_all")
 async def show_all_history_date(callback: CallbackQuery, state: FSMContext):
@@ -143,11 +148,11 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
     date_from = data.get('date_from')
     date_to = data.get('date_to')
     
-    # Strictly fetch 50 records as per requirement for better performance
+    # Filter by driver_user_id (filter_val) strictly in get_history
     history = await asyncio.to_thread(get_history, filter_type, filter_val, date_from, date_to, limit=50)
     
     if not history:
-        text = "Ushbu oraliqda ma'lumot topilmadi."
+        text = "Ushbu haydovchida yoki moshinada hali tarix yo'q." if filter_type != 'all' else "Ushbu oraliqda ma'lumot topilmadi."
         kb_markup = kb.get_pagination_kb(1, 1)
         if edit:
             await message.edit_text(text, reply_markup=kb_markup)
@@ -164,7 +169,6 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
     if filter_type == 'car': 
         title = f"🚗 {filter_val} mashinasi tarixi\n"
     elif filter_type == 'drv': 
-        # Optionally look up name from first item if available
         drv_name = items[0].get('driver_name', 'Noma\'lum') if items else 'Noma\'lum'
         title = f"👤 Haydovchi: {drv_name} (ID: {filter_val}) tarixi\n"
     else: 
@@ -189,7 +193,7 @@ async def show_history_results(message: Message, state: FSMContext, page: int, e
         await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
     
     elapsed = time.time() - t0
-    logging.getLogger(__name__).info(f"show_history_results: {elapsed:.2f}s")
+    logger.info(f"History filter query for {filter_type}={filter_val} took {elapsed:.2f}s")
 
 @router.callback_query(F.data.startswith("h:p:") | F.data.startswith("h:n:"))
 async def paginate_admin_history(callback: CallbackQuery, state: FSMContext):
@@ -227,7 +231,7 @@ async def show_cars_status(callback: CallbackQuery):
     
     status_data = await asyncio.to_thread(get_drivers_status)
     if not status_data:
-        await callback.message.edit_text("Mashinalar holati topilmadi (Google Sheets yoki baza bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Mashinalar holati topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
         
     text = "🚗 **Mashinalar holati:**\n\n"

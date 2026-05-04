@@ -178,3 +178,36 @@ def get_drivers_status():
     except Exception as e:
         logger.error(f"Error getting drivers status: {e}")
         return []
+def get_all_drivers_list():
+    """Returns a list of unique drivers [(name, tid), ...] from drivers sheet."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers!B2:C').execute()
+        rows = result.get('values', [])
+        drivers = []
+        seen_tid = set()
+        for row in rows:
+            if len(row) >= 2:
+                name = row[0].strip()
+                tid = row[1].strip()
+                if tid not in seen_tid:
+                    drivers.append((name, tid))
+                    seen_tid.add(tid)
+        return drivers
+    except Exception as e:
+        logger.error(f"Error getting all drivers list: {e}")
+        return []
+
+def get_all_cars_list():
+    """Returns a list of unique car numbers from drivers sheet."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='drivers!A2:A').execute()
+        rows = result.get('values', [])
+        cars = sorted(list(set(row[0].strip() for row in rows if row)))
+        return cars
+    except Exception as e:
+        logger.error(f"Error getting all cars list: {e}")
+        return []

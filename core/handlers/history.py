@@ -1,6 +1,7 @@
 import asyncio
 import time
 import logging
+import json
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from core.db import get_history, get_order, get_order_steps
@@ -9,10 +10,14 @@ import core.keyboards as kb
 router = Router()
 logger = logging.getLogger(__name__)
 
-import json
+def format_duration(minutes: int):
+    if minutes is None: return ""
+    h = minutes // 60
+    m = minutes % 60
+    return f"{f'{h}s ' if h > 0 else ''}{m}m"
 
 def format_delivery_short(order):
-    """Format order summary WITHOUT extra DB call."""
+    """Format order summary for history list."""
     is_done = (
         order.get('current_status') == 'DONE' or 
         order.get('completed_at') is not None
@@ -26,38 +31,37 @@ def format_delivery_short(order):
             from datetime import datetime
             st = datetime.fromisoformat(order['start_time'])
             start_time = st.strftime("%H:%M")
-        except:
-            pass
+        except: pass
     if order.get('completed_at'):
         try:
             from datetime import datetime
             ft = datetime.fromisoformat(order['completed_at'])
             end_time = ft.strftime("%H:%M")
-        except:
-            pass
+        except: pass
     
-    text = f"#{order['order_id']} | {order['car_number']}\n"
-    text += f"Haydovchi: {order['driver_name']}\n"
-    if order.get('transit_status'):
-        text += f"Transit: {order['transit_status']}\n"
-    text += f"Manzil: {order['address']}\n"
-    text += f"Oldi: {start_time} | Yetkazdi: {end_time}\n"
+    text = f"📦 #{order['order_id']} | {order['car_number']}\n"
+    text += f"Haydovchi: {order['driver_name']} ({order.get('driver_telegram_id')})\n"
+    
+    transit = "Ha" if order.get('transit_exists') else "Yo'q"
+    text += f"Transit: {transit} | Holat: {status}\n"
+    text += f"Yuk: {order.get('cargo', 'Noma\\'lum')}\n"
+    text += f"Manzil: {order.get('address', 'Noma\\'lum')}\n"
+    text += f"Vaqt: {start_time} - {end_time}"
     if order.get('duration_minutes'):
-        h = order['duration_minutes'] // 60
-        m = order['duration_minutes'] % 60
-        text += f"Vaqt: {f'{h}s ' if h > 0 else ''}{m}m\n"
-    text += f"Holat: {status}\n"
+        text += f" ({format_duration(order['duration_minutes'])})"
+    text += "\n"
     return text
 
 def format_delivery_detailed(order):
-    """Detailed format with all fields."""
+    """Detailed format with all fields and steps."""
     steps = get_order_steps(order['order_id'])
     
     text = f"📦 Buyurtma: #{order['order_id']}\n"
     text += f"Haydovchi: {order['driver_name']} (ID: {order['driver_telegram_id']})\n"
     text += f"Mashina: {order['car_number']}\n"
-    if order.get('transit_status'):
-        text += f"Transit: {order['transit_status']}\n"
+    
+    transit = "Ha" if order.get('transit_exists') else "Yo'q"
+    text += f"Transit: {transit}\n"
 
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"
@@ -97,9 +101,7 @@ def format_delivery_detailed(order):
     if end_time: text += f"Tugagan: {end_time}\n"
     
     if order.get('duration_minutes'):
-        h = order['duration_minutes'] // 60
-        m = order['duration_minutes'] % 60
-        text += f"Ketgan vaqt: {f'{h} soat ' if h > 0 else ''}{m} daqiqa\n"
+        text += f"Ketgan vaqt: {format_duration(order['duration_minutes'])}\n"
     
     if loc_lat and loc_lng:
         text += f"Lokatsiya: https://maps.google.com/?q={loc_lat},{loc_lng}\n"
