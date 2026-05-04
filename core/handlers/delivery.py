@@ -15,16 +15,7 @@ import core.keyboards as kb
 router = Router()
 logger = logging.getLogger(__name__)
 
-tz = pytz.timezone(TIMEZONE)
-
-def get_current_time():
-    return datetime.now(tz).strftime("%H:%M")
-
-def format_duration(minutes: int):
-    if minutes is None: return ""
-    h = minutes // 60
-    m = minutes % 60
-    return f"{f'{h} soat ' if h > 0 else ''}{m} daqiqa"
+from core.utils import get_now, parse_dt, format_time, format_duration, get_order_start_time
 
 def should_send_to_group():
     return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
@@ -41,8 +32,12 @@ async def update_group_message(bot: Bot, order_id: str):
 
     steps = await asyncio.to_thread(get_order_steps, order_id)
     
-    start_time_text = "Noma'lum"
-    end_time_text = "Noma'lum"
+    start_time_dt = get_order_start_time(order, steps)
+    start_time_text = format_time(start_time_dt)
+    
+    end_time_dt = parse_dt(order.get('completed_at'))
+    end_time_text = format_time(end_time_dt)
+    
     last_step_text = ""
     loc_lat = None
     loc_lng = None
@@ -55,7 +50,6 @@ async def update_group_message(bot: Bot, order_id: str):
         name = s['step_name']
         t = s.get('time_text', '')
         if name == 'take_delivery':
-            start_time_text = t
             last_step_text = f"Vazifani oldi — {t}"
         elif name.startswith('zone_'):
             z = name.split('_')[1]
@@ -126,7 +120,8 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
         await callback.message.answer("Buyurtma topilmadi.")
         return
 
-    t = get_current_time()
+    now = get_now()
+    t = format_time(now)
     await asyncio.to_thread(save_order_step, {
         'order_id': order_id,
         'step_name': 'take_delivery',
@@ -152,13 +147,13 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
                 await asyncio.to_thread(update_order, order_id, {
                     'group_message_id': msg.message_id, 
                     'current_status': 'take_delivery', 
-                    'start_time': datetime.now(tz).isoformat()
+                    'start_time': now.isoformat()
                 })
                 logger.info(f"Sent initial group message for {order_id}, ID: {msg.message_id}")
             except Exception as e:
                 logger.error(f"Error sending to group: {e}")
         else:
-            await asyncio.to_thread(update_order, order_id, {'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
+            await asyncio.to_thread(update_order, order_id, {'current_status': 'take_delivery', 'start_time': now.isoformat()})
 
     asyncio.create_task(bg_task())
 
@@ -326,26 +321,25 @@ async def process_obj_photo(message: Message, state: FSMContext, bot: Bot):
 async def finish_delivery(callback: CallbackQuery, bot: Bot):
     await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("finish_")[1]
-    t = get_current_time()
+    now = get_now()
+    t = format_time(now)
     
     async def bg_task():
-        now = datetime.now(tz)
-        
         await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'finish', 'time_text': t})
         order = await asyncio.to_thread(get_order, order_id)
+        steps = await asyncio.to_thread(get_order_steps, order_id)
         
-        # Calculate duration
-        start_time_obj = None
+        # Calculate duration using utilities
+        start_time_dt = get_order_start_time(order, steps)
         duration_minutes = None
-        start_time_str = "Noma'lum"
-        if order and order.get('start_time'):
+        start_time_str = format_time(start_time_dt)
+        
+        if start_time_dt:
             try:
-                start_time_obj = datetime.fromisoformat(order['start_time'])
-                duration_td = now - start_time_obj
+                duration_td = now - start_time_dt
                 duration_minutes = int(duration_td.total_seconds() / 60)
-                start_time_str = start_time_obj.strftime("%H:%M")
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error calculating duration for {order_id}: {e}")
 
         update_payload = {
             'current_status': 'DONE', 
@@ -369,7 +363,7 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
             finish_text += f"Ketgan vaqt: {format_duration(duration_minutes)}"
             
         await callback.message.edit_text(finish_text)
-        logger.info(f"Order {order_id} finished. Duration: {duration_minutes} min.")
+        logger.info(f"Order {order_id} finished. Duration: {duration_minutes} min. Start: {start_time_str}, End: {t}")
 
         # Media to group
         if should_send_to_group():

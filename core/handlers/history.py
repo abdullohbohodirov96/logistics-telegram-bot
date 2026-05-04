@@ -10,11 +10,7 @@ import core.keyboards as kb
 router = Router()
 logger = logging.getLogger(__name__)
 
-def format_duration(minutes: int):
-    if minutes is None: return ""
-    h = minutes // 60
-    m = minutes % 60
-    return f"{f'{h}s ' if h > 0 else ''}{m}m"
+from core.utils import parse_dt, format_time, format_duration, get_order_start_time
 
 def format_delivery_short(order):
     """Format order summary for history list."""
@@ -24,20 +20,13 @@ def format_delivery_short(order):
     )
     status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
     
-    start_time = "Noma'lum"
-    end_time = "Noma'lum"
-    if order.get('start_time'):
-        try:
-            from datetime import datetime
-            st = datetime.fromisoformat(order['start_time'])
-            start_time = st.strftime("%H:%M")
-        except: pass
-    if order.get('completed_at'):
-        try:
-            from datetime import datetime
-            ft = datetime.fromisoformat(order['completed_at'])
-            end_time = ft.strftime("%H:%M")
-        except: pass
+    # Use utilities for consistent time parsing/fallback
+    steps = get_order_steps(order['order_id'])
+    start_time_dt = get_order_start_time(order, steps)
+    start_time = format_time(start_time_dt)
+    
+    end_time_dt = parse_dt(order.get('completed_at'))
+    end_time = format_time(end_time_dt)
     
     text = f"📦 #{order['order_id']} | {order['car_number']}\n"
     text += f"Haydovchi: {order['driver_name']} ({order.get('driver_telegram_id')})\n"
@@ -70,8 +59,6 @@ def format_delivery_detailed(order):
     if order.get('comment'):
         text += f"Izoh: {order['comment']}\n"
         
-    start_time = ""
-    end_time = ""
     loc_lat = None
     loc_lng = None
     photo_load = "Yo'q"
@@ -79,10 +66,7 @@ def format_delivery_detailed(order):
     has_finish_step = False
     
     for s in steps:
-        if s['step_name'] == 'take_delivery':
-            start_time = s['time_text']
-        elif s['step_name'] == 'finish':
-            end_time = s['time_text']
+        if s['step_name'] == 'finish':
             has_finish_step = True
         elif s['step_name'] == 'location':
             loc_lat = s.get('location_lat')
@@ -91,6 +75,21 @@ def format_delivery_detailed(order):
             photo_load = "Bor"
         elif s['step_name'] == 'photo_obj':
             photo_obj = "Bor"
+
+    # Use utilities for consistent time parsing/fallback
+    start_time_dt = get_order_start_time(order, steps)
+    start_time = format_time(start_time_dt)
+    
+    end_time_dt = parse_dt(order.get('completed_at'))
+    end_time = "Noma'lum"
+    if not end_time_dt and has_finish_step:
+        # If not in order field, check finish step for time_text
+        for s in steps:
+            if s['step_name'] == 'finish':
+                end_time = s['time_text']
+                break
+    else:
+        end_time = format_time(end_time_dt)
             
     is_done = (
         order.get('current_status') == 'DONE' or 
@@ -99,8 +98,8 @@ def format_delivery_detailed(order):
     )
     status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
     text += f"\nHolat: {status}\n"
-    if start_time: text += f"Boshlangan: {start_time}\n"
-    if end_time: text += f"Tugagan: {end_time}\n"
+    if start_time != "Noma'lum": text += f"Boshlangan: {start_time}\n"
+    if end_time != "Noma'lum": text += f"Tugagan: {end_time}\n"
     
     if order.get('duration_minutes'):
         text += f"Ketgan vaqt: {format_duration(order['duration_minutes'])}\n"
