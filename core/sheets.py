@@ -1,8 +1,10 @@
 import logging
 import re
+import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from core.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID
+from core.cache import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,11 @@ def clean_tid(val: str):
     return None
 
 def get_drivers():
-    """Read driver list from DRIVERS sheet using header names.
-    Expected headers: car_number, driver_name, driver_user_id, status, current_order_id
-    """
+    """Read driver list from DRIVERS sheet using header names. Cached 30s."""
+    cached = cache_get('drivers_dict', 30)
+    if cached is not None:
+        return cached
+        
     sheets = get_sheets_service()
     if not sheets: return {}
     
@@ -62,56 +66,31 @@ def get_drivers():
         # Identify column indices
         try:
             idx_car = headers.index('car_number')
-        except ValueError:
-            logger.error("DRIVERS header missing: car_number")
-            return {}
-        try:
             idx_name = headers.index('driver_name')
-        except ValueError:
-            logger.error("DRIVERS header missing: driver_name")
-            return {}
-        try:
             idx_tid = headers.index('driver_user_id')
-        except ValueError:
-            logger.error("DRIVERS header missing: driver_user_id")
+        except ValueError as e:
+            logger.error(f"DRIVERS header missing: {e}")
             return {}
             
         drivers = {}
         for i, row in enumerate(rows):
-            row_num = i + 2
-            if len(row) <= max(idx_car, idx_name, idx_tid):
-                continue
-                
-            raw_car = row[idx_car]
-            raw_name = row[idx_name]
-            raw_tid = row[idx_tid]
-            
-            norm_car = normalize_car(raw_car)
-            parsed_tid = clean_tid(raw_tid)
-            
-            logger.info(f"DRIVERS row {row_num}: raw_car='{raw_car}', raw_tid='{raw_tid}', norm_car='{norm_car}', parsed_tid={parsed_tid}")
-            
-            if not norm_car:
-                continue
-                
-            if parsed_tid is None:
-                logger.error(f"Invalid driver_user_id row {row_num} car {raw_car} value='{raw_tid}'")
-                continue
-                
-            drivers[norm_car] = {
-                'driver_name': raw_name.strip(),
-                'telegram_id': parsed_tid
-            }
-            
+            if len(row) <= max(idx_car, idx_name, idx_tid): continue
+            norm_car = normalize_car(row[idx_car])
+            parsed_tid = clean_tid(row[idx_tid])
+            if norm_car and parsed_tid:
+                drivers[norm_car] = {
+                    'driver_name': row[idx_name].strip(),
+                    'telegram_id': parsed_tid
+                }
+        
+        cache_set('drivers_dict', drivers)
         return drivers
     except Exception as e:
         logger.error(f"Error getting drivers: {e}")
         return {}
 
 def get_new_orders():
-    """Read orders from ORDERS sheet using headers.
-    Headers: order_id, car_number, address, cargo, comment, status
-    """
+    """Read orders from ORDERS sheet using headers."""
     sheets = get_sheets_service()
     if not sheets: return []
     
@@ -139,9 +118,7 @@ def get_new_orders():
             
         new_orders = []
         for i, row in enumerate(rows):
-            if len(row) <= idx_status:
-                continue
-                
+            if len(row) <= idx_status: continue
             if row[idx_status].strip().upper() == 'SEND':
                 order = {
                     'row_index': i + 2,
@@ -158,29 +135,20 @@ def get_new_orders():
         return []
 
 def update_order_status(row_index: int, status: str):
-    """Update status in ORDERS sheet. We assume status is the last column or we find it."""
+    """Update status in ORDERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return
-    
     try:
-        # To be safe, we always find the status column first
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='ORDERS!1:1').execute()
         headers = [h.strip().lower() for h in result.get('values', [[]])[0]]
-        try:
-            idx = headers.index('status')
-            col_letter = chr(ord('A') + idx)
-            range_name = f'ORDERS!{col_letter}{row_index}'
-            
-            body = {'values': [[status]]}
-            sheets.values().update(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=range_name,
-                valueInputOption='USER_ENTERED',
-                body=body
-            ).execute()
-            logger.info(f"Updated ORDERS row {row_index} status to {status}")
-        except ValueError:
-            logger.error("ORDERS header missing: status")
+        idx = headers.index('status')
+        col_letter = chr(ord('A') + idx)
+        sheets.values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'ORDERS!{col_letter}{row_index}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[status]]}
+        ).execute()
     except Exception as e:
         logger.error(f"Error updating order status: {e}")
 
@@ -188,83 +156,65 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
     """Update driver status in DRIVERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return
-    
     try:
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A1:Z').execute()
         values = result.get('values', [])
         if not values: return
-        
         headers = [h.strip().lower() for h in values[0]]
-        rows = values[1:]
-        
-        try:
-            idx_car = headers.index('car_number')
-            idx_status = headers.index('status')
-            idx_order = headers.index('current_order_id')
-        except ValueError as e:
-            logger.error(f"DRIVERS header missing: {e}")
-            return
-            
+        idx_car = headers.index('car_number')
+        idx_status = headers.index('status')
+        idx_order = headers.index('current_order_id')
         norm_target = normalize_car(car_number)
         row_num = -1
-        for i, row in enumerate(rows):
+        for i, row in enumerate(values[1:]):
             if len(row) > idx_car and normalize_car(row[idx_car]) == norm_target:
                 row_num = i + 2
                 break
-                
-        if row_num == -1:
-            logger.warning(f"Car {car_number} not found in DRIVERS sheet")
-            return
-            
-        # Update status and order id
-        col_status = chr(ord('A') + idx_status)
-        col_order = chr(ord('A') + idx_order)
-        
-        # Batch update or individual
-        sheets.values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'DRIVERS!{col_status}{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[status]]}
-        ).execute()
-        sheets.values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'DRIVERS!{col_order}{row_num}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[current_order_id]]}
-        ).execute()
-        
-        logger.info(f"DRIVERS status changed: {car_number} -> {status}")
+        if row_num != -1:
+            col_status = chr(ord('A') + idx_status)
+            col_order = chr(ord('A') + idx_order)
+            sheets.values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f'DRIVERS!{col_status}{row_num}',
+                valueInputOption='USER_ENTERED',
+                body={'values': [[status]]}
+            ).execute()
+            sheets.values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f'DRIVERS!{col_order}{row_num}',
+                valueInputOption='USER_ENTERED',
+                body={'values': [[current_order_id]]}
+            ).execute()
     except Exception as e:
-        logger.error(f"Error updating DRIVERS sheet: {e}")
+        logger.error(f"Error updating DRIVERS status: {e}")
 
 def get_all_drivers_list():
+    cached = cache_get('master_drivers_list', 30)
+    if cached is not None: return cached
     sheets = get_sheets_service()
     if not sheets: return []
     try:
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A1:Z').execute()
         values = result.get('values', [])
         if not values: return []
-        
         headers = [h.strip().lower() for h in values[0]]
-        try:
-            idx_tid = headers.index('driver_user_id')
-            idx_name = headers.index('driver_name')
-        except ValueError: return []
-        
+        idx_tid = headers.index('driver_user_id')
+        idx_name = headers.index('driver_name')
         drivers = []
         seen = set()
         for row in values[1:]:
-            if len(row) > max(idx_tid, idx_name):
-                tid = clean_tid(row[idx_tid])
-                name = row[idx_name].strip()
-                if tid and tid not in seen:
-                    drivers.append((name, str(tid)))
-                    seen.add(tid)
+            tid = clean_tid(row[idx_tid])
+            name = row[idx_name].strip()
+            if tid and tid not in seen:
+                drivers.append((name, str(tid)))
+                seen.add(tid)
+        cache_set('master_drivers_list', drivers)
         return drivers
     except Exception: return []
 
 def get_all_cars_list():
+    cached = cache_get('master_cars_list', 30)
+    if cached is not None: return cached
     sheets = get_sheets_service()
     if not sheets: return []
     try:
@@ -272,23 +222,20 @@ def get_all_cars_list():
         values = result.get('values', [])
         if not values: return []
         headers = [h.strip().lower() for h in values[0]]
-        try:
-            idx_car = headers.index('car_number')
-        except ValueError: return []
-        
+        idx_car = headers.index('car_number')
         cars = set()
         for row in values[1:]:
-            if len(row) > idx_car:
-                norm = normalize_car(row[idx_car])
-                if norm: cars.add(norm)
-        return sorted(list(cars))
+            norm = normalize_car(row[idx_car])
+            if norm: cars.add(norm)
+        res = sorted(list(cars))
+        cache_set('master_cars_list', res)
+        return res
     except Exception: return []
 
 def get_drivers_status():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        # Just return the values, dashboard will handle it
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:Z').execute()
         return result.get('values', [])
     except Exception: return []

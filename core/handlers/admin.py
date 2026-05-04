@@ -13,7 +13,7 @@ from core.cache import cache_get, cache_set
 import core.keyboards as kb
 from core.sheets import get_drivers_status, get_all_drivers_list, get_all_cars_list
 from core.states import AdminProcess
-from core.handlers.history import format_delivery_short, format_delivery_detailed
+from core.handlers.history import format_delivery_short
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -21,8 +21,7 @@ tz = pytz.timezone(TIMEZONE)
 
 @router.message(F.text == "🛠 Admin panel")
 async def admin_panel(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
+    if message.from_user.id not in ADMIN_IDS: return
     await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
 
 @router.callback_query(F.data == "adm_close")
@@ -39,34 +38,19 @@ async def back_to_admin(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "adm_hist_car")
 async def show_cars(callback: CallbackQuery):
     await callback.answer()
-    
-    # Use cached car list (TTL 30s as requested)
-    cars = cache_get('master_cars', 30)
-    if cars is None:
-        cars = await asyncio.to_thread(get_all_cars_list)
-        cache_set('master_cars', cars)
-    
+    cars = await asyncio.to_thread(get_all_cars_list)
     if not cars:
-        await callback.message.edit_text("Mashinalar topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Mashinalar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
     await callback.message.edit_text("Qaysi mashina bo'yicha tarixni ko'rmoqchisiz?", reply_markup=kb.get_cars_kb(cars))
 
 @router.callback_query(F.data == "adm_hist_drv")
 async def show_drivers(callback: CallbackQuery):
     await callback.answer()
-    
-    # Use cached driver list (TTL 30s)
-    drivers = cache_get('master_drivers', 30)
-    if drivers is None:
-        drivers = await asyncio.to_thread(get_all_drivers_list)
-        cache_set('master_drivers', drivers)
-    
+    drivers = await asyncio.to_thread(get_all_drivers_list)
     if not drivers:
-        await callback.message.edit_text("Haydovchilar topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Haydovchilar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
-        
-    # Convert list of tuples to dict for compatibility with existing kb.get_drivers_kb
-    # Actually, let's update kb.get_drivers_kb to handle list of tuples if needed, or just convert here.
     drivers_dict = {tid: name for name, tid in drivers}
     await callback.message.edit_text("Qaysi haydovchi bo'yicha tarixni ko'rmoqchisiz?", reply_markup=kb.get_drivers_kb(drivers_dict))
 
@@ -81,169 +65,122 @@ async def select_car_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     car = callback.data.split("car_")[1]
     await state.update_data(filter_type='car', filter_val=car)
-    await callback.message.edit_text(f"🚗 {car} mashinasi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
+    await callback.message.edit_text(f"🚗 {car} mashinasi sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
 
 @router.callback_query(F.data.startswith("drv_"))
 async def select_drv_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     tid = callback.data.split("drv_")[1]
     await state.update_data(filter_type='drv', filter_val=tid)
-    await callback.message.edit_text(f"👤 Haydovchi bo'yicha sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
+    await callback.message.edit_text(f"👤 Haydovchi sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
 
 @router.callback_query(F.data.startswith("dt_"))
 async def handle_date_range(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     range_type = callback.data.split("dt_")[1]
-    
     now = datetime.now(tz)
-    date_from = None
-    date_to = None
-    
+    df, dt = None, None
     if range_type == 'today':
-        date_from = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        date_to = now.replace(hour=23, minute=59, second=59).isoformat()
+        df = now.replace(hour=0, minute=0, second=0).isoformat()
+        dt = now.replace(hour=23, minute=59, second=59).isoformat()
     elif range_type == 'yesterday':
-        yesterday = now - timedelta(days=1)
-        date_from = yesterday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        date_to = yesterday.replace(hour=23, minute=59, second=59).isoformat()
+        y = now - timedelta(days=1)
+        df = y.replace(hour=0, minute=0, second=0).isoformat()
+        dt = y.replace(hour=23, minute=59, second=59).isoformat()
     elif range_type == '7days':
-        date_from = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        date_to = now.replace(hour=23, minute=59, second=59).isoformat()
+        df = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0).isoformat()
+        dt = now.replace(hour=23, minute=59, second=59).isoformat()
     elif range_type == '30days':
-        date_from = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        date_to = now.replace(hour=23, minute=59, second=59).isoformat()
+        df = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0).isoformat()
+        dt = now.replace(hour=23, minute=59, second=59).isoformat()
     elif range_type == 'manual':
         await state.set_state(AdminProcess.waiting_for_manual_date)
-        await callback.message.edit_text("Iltimos, sanani quyidagi formatda kiriting:\n\n`03.05.2026 - 05.05.2026`", parse_mode="Markdown")
+        await callback.message.edit_text("Format: `03.05.2026 - 05.05.2026`", parse_mode="Markdown")
         return
-        
-    await state.update_data(date_from=date_from, date_to=date_to)
+    await state.update_data(date_from=df, date_to=dt)
     await show_history_results(callback.message, state, 1)
 
 @router.message(AdminProcess.waiting_for_manual_date, F.text)
 async def process_manual_date(message: Message, state: FSMContext):
-    text = message.text.strip()
     try:
-        start_str, end_str = text.split("-")
-        start_date = datetime.strptime(start_str.strip(), "%d.%m.%Y")
-        end_date = datetime.strptime(end_str.strip(), "%d.%m.%Y")
-        
-        start_date = tz.localize(start_date.replace(hour=0, minute=0, second=0))
-        end_date = tz.localize(end_date.replace(hour=23, minute=59, second=59))
-        
-        date_from = start_date.isoformat()
-        date_to = end_date.isoformat()
-        
-        await state.update_data(date_from=date_from, date_to=date_to)
+        s, e = message.text.split("-")
+        df = tz.localize(datetime.strptime(s.strip(), "%d.%m.%Y").replace(hour=0, minute=0, second=0)).isoformat()
+        dt = tz.localize(datetime.strptime(e.strip(), "%d.%m.%Y").replace(hour=23, minute=59, second=59)).isoformat()
+        await state.update_data(date_from=df, date_to=dt)
         await show_history_results(message, state, 1, edit=False)
         await state.set_state(None)
-    except Exception as e:
-        await message.answer("Noto'g'ri format. Iltimos, qaytadan urinib ko'ring:\n`03.05.2026 - 05.05.2026`", parse_mode="Markdown")
+    except: await message.answer("Xato format. Qayta urinib ko'ring.")
 
 async def show_history_results(message: Message, state: FSMContext, page: int, edit=True):
     t0 = time.time()
     data = await state.get_data()
-    filter_type = data.get('filter_type', 'all')
-    filter_val = data.get('filter_val')
-    date_from = data.get('date_from')
-    date_to = data.get('date_to')
+    ft, fv = data.get('filter_type', 'all'), data.get('filter_val')
+    df, dt = data.get('date_from'), data.get('date_to')
     
-    # Filter by driver_user_id (filter_val) strictly in get_history
-    history = await asyncio.to_thread(get_history, filter_type, filter_val, date_from, date_to, limit=50)
-    
+    history = await asyncio.to_thread(get_history, ft, fv, df, dt, limit=50)
     if not history:
-        text = "Ushbu haydovchida yoki moshinada hali tarix yo'q." if filter_type != 'all' else "Ushbu oraliqda ma'lumot topilmadi."
-        kb_markup = kb.get_pagination_kb(1, 1)
-        if edit:
-            await message.edit_text(text, reply_markup=kb_markup)
-        else:
-            await message.answer(text, reply_markup=kb_markup)
+        msg = "Tarix yo'q."
+        if edit: await message.edit_text(msg, reply_markup=kb.get_pagination_kb(1, 1))
+        else: await message.answer(msg, reply_markup=kb.get_pagination_kb(1, 1))
         return
 
-    total_pages = (len(history) + 4) // 5
-    start_idx = (page - 1) * 5
-    end_idx = start_idx + 5
-    items = history[start_idx:end_idx]
+    tp = (len(history) + 4) // 5
+    items = history[(page-1)*5 : page*5]
     
-    title = ""
-    if filter_type == 'car': 
-        title = f"🚗 {filter_val} mashinasi tarixi\n"
-    elif filter_type == 'drv': 
-        drv_name = items[0].get('driver_name', 'Noma\'lum') if items else 'Noma\'lum'
-        title = f"👤 Haydovchi: {drv_name} (ID: {filter_val}) tarixi\n"
-    else: 
-        title = "📋 Barcha tarix\n"
-    
-    d1 = datetime.fromisoformat(date_from).strftime('%d.%m.%Y') if date_from else ""
-    d2 = datetime.fromisoformat(date_to).strftime('%d.%m.%Y') if date_to else ""
-    
-    if edit:
-        try:
-            await message.delete()
-        except:
-            pass
+    if edit: 
+        try: await message.delete()
+        except: pass
         
-    await message.answer(f"{title}📅 {d1} - {d2}")
+    d1 = datetime.fromisoformat(df).strftime('%d.%m.%Y') if df else ""
+    d2 = datetime.fromisoformat(dt).strftime('%d.%m.%Y') if dt else ""
+    await message.answer(f"📋 Tarix: {d1} - {d2}")
     
     for order in items:
-        text = format_delivery_short(order)
+        text = await asyncio.to_thread(format_delivery_short, order)
         await message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
-    if total_pages > 1:
-        await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
-    
-    elapsed = time.time() - t0
-    logger.info(f"History filter query for {filter_type}={filter_val} took {elapsed:.2f}s")
+    if tp > 1:
+        await message.answer(f"Sahifa {page}/{tp}", reply_markup=kb.get_pagination_kb(page, tp))
+    logger.info(f"admin history filter query took {time.time()-t0:.2f}s")
 
 @router.callback_query(F.data.startswith("h:p:") | F.data.startswith("h:n:"))
 async def paginate_admin_history(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    action, page_str = callback.data.split(":")[1:]
-    page = int(page_str)
+    page = int(callback.data.split(":")[2])
     await show_history_results(callback.message, state, page, edit=True)
 
 @router.callback_query(F.data == "adm_active")
 async def show_active(callback: CallbackQuery):
+    t0 = time.time()
     await callback.answer()
-    
     active = await asyncio.to_thread(get_active_orders)
     if not active:
-        await callback.message.edit_text("Aktiv vazifalar topilmadi.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+        await callback.message.edit_text("Aktiv vazifalar yo'q.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
-        
-    page = 1
-    total_pages = (len(active) + 4) // 5
-    items = active[:5]
-    
     await callback.message.delete()
     await callback.message.answer("📊 Aktiv vazifalar:")
-    
-    for order in items:
-        text = format_delivery_short(order)
+    for order in active[:5]:
+        text = await asyncio.to_thread(format_delivery_short, order)
         await callback.message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
-        
-    if total_pages > 1:
-        await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_pagination_kb(page, total_pages))
+    tp = (len(active) + 4) // 5
+    if tp > 1: await callback.message.answer(f"Sahifa 1/{tp}", reply_markup=kb.get_pagination_kb(1, tp))
+    logger.info(f"admin active list took {time.time()-t0:.2f}s")
 
 @router.callback_query(F.data == "adm_cars_status")
 async def show_cars_status(callback: CallbackQuery):
-    await callback.answer("Yuklanmoqda...", show_alert=False)
-    
-    status_data = await asyncio.to_thread(get_drivers_status)
-    if not status_data:
-        await callback.message.edit_text("Mashinalar holati topilmadi (Google Sheets bo'sh).", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+    t0 = time.time()
+    await callback.answer()
+    data = await asyncio.to_thread(get_drivers_status)
+    if not data:
+        await callback.message.edit_text("Ma'lumot yo'q.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
         return
-        
     text = "🚗 **Mashinalar holati:**\n\n"
-    for row in status_data:
+    # Find car_number and status columns from DRIVERS sheet structure (helpers in sheets.py can be used)
+    # Since get_drivers_status returns raw rows, we assume A=driver_user_id, B=driver_name, C=car_number, D=status, E=order_id
+    for row in data:
         if len(row) >= 4:
-            car = row[0]
-            status = row[3]
-            order_id = row[4] if len(row) > 4 else ""
-            
-            if order_id:
-                text += f"🔹 {car} — {status} — #{order_id}\n"
-            else:
-                text += f"🔹 {car} — {status}\n"
-                
+            text += f"🔹 {row[2]} — {row[3]}"
+            if len(row) > 4 and row[4]: text += f" — #{row[4]}"
+            text += "\n"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
+    logger.info(f"admin cars status took {time.time()-t0:.2f}s")
