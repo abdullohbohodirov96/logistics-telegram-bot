@@ -120,7 +120,7 @@ def format_delivery_detailed(order):
 @router.message(F.text == "📋 Mening tarixim")
 async def my_history(message: Message):
     tid = message.from_user.id
-    history = get_history('driver', str(tid))
+    history = get_history('drv', str(tid))
     if not history:
         await message.answer("Sizda hali tarix yo'q.")
         return
@@ -143,7 +143,7 @@ async def paginate_my_history(callback: CallbackQuery):
     page = int(page_str)
     
     tid = callback.from_user.id
-    history = get_history('driver', str(tid))
+    history = get_history('drv', str(tid))
     
     total_pages = (len(history) + 4) // 5
     start_idx = (page - 1) * 5

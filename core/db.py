@@ -104,7 +104,7 @@ def get_history(filter_type: str, filter_val: str, date_from: str = None, date_t
         
         query = supabase.table('orders').select('*')
         
-        if filter_type == 'driver':
+        if filter_type == 'drv':
             query = query.eq('driver_telegram_id', filter_val)
         elif filter_type == 'car':
             query = query.eq('car_number', filter_val)
