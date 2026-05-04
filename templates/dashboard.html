@@ -3,158 +3,216 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Logistika Dashboard</title>
+    <title>Dunyabunya — Logistika Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            margin: 0; padding: 0;
-            background-color: #121212;
-            color: white;
-            font-family: 'Inter', sans-serif;
-            overflow: hidden;
-            width: 1920px; height: 1080px;
-            box-sizing: border-box;
-            display: flex; flex-direction: column;
+            background: #0f0f0f;
+            color: #fff;
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
+
+        /* ── Header ────────────────────────────────── */
         .header {
             display: flex; justify-content: space-between; align-items: center;
-            background-color: #1e1e1e;
-            padding: 0 40px; height: 100px;
+            padding: 16px 32px;
+            background: #1a1a1a;
             border-bottom: 3px solid #e97609;
         }
-        .logo { font-size: 40px; font-weight: 900; letter-spacing: -1px; }
+        .logo { font-size: clamp(24px, 3vw, 42px); font-weight: 900; }
         .logo span { color: #e97609; }
-        .title { font-size: 32px; font-weight: bold; color: #ddd; letter-spacing: 2px; text-transform: uppercase;}
-        .clock { font-size: 45px; font-weight: 900; color: #e97609; }
-        .stats-row {
-            display: flex; justify-content: space-between; gap: 20px;
-            padding: 20px 40px; height: 160px; box-sizing: border-box;
+        .header-right { display: flex; align-items: center; gap: 24px; }
+        .clock { font-size: clamp(20px, 2.5vw, 40px); font-weight: 900; color: #e97609; font-variant-numeric: tabular-nums; }
+        .refresh-dot { width: 10px; height: 10px; border-radius: 50%; background: #28a745; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+
+        /* ── Stats Row ─────────────────────────────── */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            padding: 20px 32px;
         }
         .stat-card {
-            flex: 1; background-color: #222; border-radius: 16px;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            border-bottom: 5px solid gray; box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            background: #1e1e1e;
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            border-bottom: 4px solid #555;
+            transition: transform .2s;
         }
-        .stat-title { font-size: 22px; color: #aaa; text-transform: uppercase; font-weight: bold; margin-bottom: 10px; }
-        .stat-val { font-size: 55px; font-weight: 900; color: white; line-height: 1; }
-        .c-active { border-color: #007bff; } .c-active .stat-val { color: #007bff; }
-        .c-done { border-color: #28a745; } .c-done .stat-val { color: #28a745; }
-        .c-fail { border-color: #dc3545; } .c-fail .stat-val { color: #dc3545; }
-        .c-cars { border-color: #e97609; } .c-cars .stat-val { color: #e97609; }
-        .main-area {
-            flex: 1; display: flex; padding: 0 40px 20px 40px; gap: 30px; box-sizing: border-box;
-            height: calc(1080px - 260px);
+        .stat-card:hover { transform: translateY(-2px); }
+        .stat-icon { font-size: clamp(28px, 3vw, 48px); margin-bottom: 8px; }
+        .stat-label { font-size: clamp(12px, 1.2vw, 18px); color: #999; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; margin-bottom: 8px; }
+        .stat-number { font-size: clamp(32px, 4vw, 64px); font-weight: 900; line-height: 1; }
+
+        .s-delivered { border-color: #28a745; } .s-delivered .stat-number { color: #28a745; }
+        .s-active { border-color: #007bff; } .s-active .stat-number { color: #007bff; }
+        .s-busy { border-color: #e97609; } .s-busy .stat-number { color: #e97609; }
+        .s-problem { border-color: #dc3545; } .s-problem .stat-number { color: #dc3545; }
+
+        /* ── Main Layout ───────────────────────────── */
+        .main {
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            gap: 20px;
+            padding: 0 32px 24px;
+            min-height: 0;
         }
-        .cars-section {
-            flex: 3; background-color: #1a1a1a; border-radius: 20px; padding: 25px;
-            display: flex; flex-direction: column;
+
+        /* ── Cars Grid ─────────────────────────────── */
+        .panel {
+            background: #1a1a1a;
+            border-radius: 16px;
+            padding: 20px;
         }
-        .section-title { font-size: 28px; font-weight: bold; margin-bottom: 20px; color: #fff; border-left: 5px solid #e97609; padding-left: 15px; }
+        .panel-title {
+            font-size: clamp(16px, 1.6vw, 26px);
+            font-weight: 700;
+            margin-bottom: 16px;
+            border-left: 4px solid #e97609;
+            padding-left: 12px;
+        }
         .cars-grid {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            grid-auto-rows: 120px;
-            gap: 15px;
-            overflow: hidden;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
         }
         .car-card {
-            background-color: #2a2a2a; border-radius: 12px; padding: 12px;
+            background: #262626;
+            border-radius: 12px;
+            padding: 14px;
+            border-left: 6px solid #555;
             display: flex; flex-direction: column; justify-content: space-between;
-            border-left: 8px solid gray; position: relative;
+            min-height: 100px;
         }
-        .car-number { font-size: 26px; font-weight: 900; letter-spacing: 1px; }
-        .driver { font-size: 16px; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .status-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 5px; }
-        .status-badge { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 6px; color: white; }
-        .order-id { font-size: 18px; font-weight: bold; color: #ccc; }
-        .s-bosh { border-color: #28a745; } .s-bosh .status-badge { background-color: #28a745; }
-        .s-band { border-color: #ffc107; } .s-band .status-badge { background-color: #ffc107; color: black; }
-        .s-yuk { border-color: #e97609; } .s-yuk .status-badge { background-color: #e97609; }
-        .s-yolda { border-color: #007bff; } .s-yolda .status-badge { background-color: #007bff; }
-        .s-yetib { border-color: #6f42c1; } .s-yetib .status-badge { background-color: #6f42c1; }
-        .updates-section {
-            flex: 1; background-color: #1a1a1a; border-radius: 20px; padding: 25px;
-            display: flex; flex-direction: column;
+        .car-num { font-size: clamp(18px, 1.8vw, 28px); font-weight: 900; letter-spacing: 1px; }
+        .car-driver { font-size: clamp(12px, 1vw, 16px); color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; }
+        .car-bottom { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 8px; }
+        .badge { font-size: clamp(10px, .9vw, 14px); font-weight: 700; padding: 3px 8px; border-radius: 6px; color: #fff; display: inline-block; }
+        .car-order { font-size: clamp(14px, 1.2vw, 20px); font-weight: 700; color: #ccc; }
+
+        .cb-bosh { border-color: #28a745; } .cb-bosh .badge { background: #28a745; }
+        .cb-band { border-color: #ffc107; } .cb-band .badge { background: #ffc107; color: #000; }
+        .cb-yuk  { border-color: #e97609; } .cb-yuk  .badge { background: #e97609; }
+        .cb-yolda{ border-color: #007bff; } .cb-yolda .badge { background: #007bff; }
+        .cb-yetib{ border-color: #6f42c1; } .cb-yetib .badge { background: #6f42c1; }
+
+        /* ── Updates List ──────────────────────────── */
+        .updates-list { display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; }
+        .updates-list::-webkit-scrollbar { width: 4px; }
+        .updates-list::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        .upd-item {
+            background: #262626;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border-left: 4px solid #555;
         }
-        .updates-list { display: flex; flex-direction: column; gap: 15px; }
-        .update-item { background-color: #222; padding: 15px; border-radius: 10px; border-left: 4px solid #aaa; }
-        .up-id { font-weight: bold; font-size: 20px; color: #e97609; }
-        .up-car { font-size: 18px; margin: 5px 0; }
-        .up-status { font-size: 16px; color: #bbb; }
+        .upd-id { font-weight: 700; font-size: clamp(13px, 1.1vw, 18px); color: #e97609; }
+        .upd-car { font-size: clamp(12px, 1vw, 16px); color: #ccc; margin-top: 3px; }
+        .upd-addr { font-size: clamp(11px, .9vw, 14px); color: #888; margin-top: 2px; }
+        .upd-status { font-size: clamp(11px, .9vw, 14px); color: #777; margin-top: 2px; }
+        .empty-msg { color: #555; text-align: center; padding: 40px 0; font-size: 16px; }
+
+        /* ── Responsive ────────────────────────────── */
+        @media (max-width: 1100px) {
+            .stats { grid-template-columns: repeat(2, 1fr); }
+            .main  { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 600px) {
+            .stats { grid-template-columns: 1fr; }
+            .header { padding: 12px 16px; }
+            .stats, .main { padding-left: 16px; padding-right: 16px; }
+        }
     </style>
 </head>
 <body>
+    <!-- Header -->
     <div class="header">
-        <div class="logo">Dunya<span>Bunya</span></div>
-        <div class="title">Logistika Monitoring Dashboard</div>
-        <div class="clock" id="clock">00:00:00</div>
+        <div class="logo">dunya<span>bunya</span></div>
+        <div class="header-right">
+            <div class="refresh-dot"></div>
+            <div class="clock" id="clock">00:00</div>
+        </div>
     </div>
 
-    <div class="stats-row">
-        <div class="stat-card c-active">
-            <div class="stat-title">Aktiv Vazifalar</div>
-            <div class="stat-val">{{ stats.active }}</div>
+    <!-- Stats Cards -->
+    <div class="stats">
+        <div class="stat-card s-delivered">
+            <div class="stat-icon">✅</div>
+            <div class="stat-label">Bugun yetkazildi</div>
+            <div class="stat-number">{{ stats.finished_today }}</div>
         </div>
-        <div class="stat-card c-done">
-            <div class="stat-title">Bugun Yetkazildi</div>
-            <div class="stat-val">{{ stats.finished_today }}</div>
+        <div class="stat-card s-active">
+            <div class="stat-icon">🚚</div>
+            <div class="stat-label">Aktiv vazifalar</div>
+            <div class="stat-number">{{ stats.active }}</div>
         </div>
-        <div class="stat-card c-fail">
-            <div class="stat-title">Muammoli / Bekor</div>
-            <div class="stat-val">{{ stats.failed }}</div>
-        </div>
-        <div class="stat-card c-cars">
-            <div class="stat-title">Mashinalar</div>
-            <div class="stat-val" style="font-size: 45px; display: flex; align-items:baseline; gap: 10px;">
-                {{ total }} <span style="font-size:24px; color:#aaa;">({{ free }} / {{ busy }})</span>
+        <div class="stat-card s-busy">
+            <div class="stat-icon">🚗</div>
+            <div class="stat-label">Mashinalar</div>
+            <div class="stat-number" style="display:flex; justify-content:center; align-items:baseline; gap:8px;">
+                {{ busy }}<span style="font-size:.5em; color:#aaa;">band</span>
+                {{ free }}<span style="font-size:.5em; color:#28a745;">bo'sh</span>
             </div>
         </div>
+        <div class="stat-card s-problem">
+            <div class="stat-icon">⚠️</div>
+            <div class="stat-label">Muammoli</div>
+            <div class="stat-number">{{ stats.failed }}</div>
+        </div>
     </div>
 
-    <div class="main-area">
-        <div class="cars-section">
-            <div class="section-title">🚗 Mashinalar Holati</div>
+    <!-- Main -->
+    <div class="main">
+        <!-- Cars Grid -->
+        <div class="panel">
+            <div class="panel-title">🚗 Mashinalar holati</div>
             <div class="cars-grid">
                 {% for d in drivers %}
                     {% set s = (d.status or '') | upper %}
                     {% set sc = '' %}
-                    {% if 'BO' in s and 'SH' in s %}
-                        {% set sc = 's-bosh' %}
-                    {% elif 'BAND' in s %}
-                        {% set sc = 's-band' %}
-                    {% elif 'YUK' in s %}
-                        {% set sc = 's-yuk' %}
-                    {% elif 'YO' in s and 'LDA' in s %}
-                        {% set sc = 's-yolda' %}
-                    {% elif 'YETIB' in s %}
-                        {% set sc = 's-yetib' %}
+                    {% if 'BO' in s and 'SH' in s %}{% set sc = 'cb-bosh' %}
+                    {% elif 'BAND' in s %}{% set sc = 'cb-band' %}
+                    {% elif 'YUK' in s %}{% set sc = 'cb-yuk' %}
+                    {% elif 'YO' in s and 'LDA' in s %}{% set sc = 'cb-yolda' %}
+                    {% elif 'YETIB' in s %}{% set sc = 'cb-yetib' %}
                     {% endif %}
-
                     <div class="car-card {{ sc }}">
                         <div>
-                            <div class="car-number">{{ d.car_number }}</div>
-                            <div class="driver">{{ d.driver_name }}</div>
+                            <div class="car-num">{{ d.car_number }}</div>
+                            <div class="car-driver">{{ d.driver_name }}</div>
                         </div>
-                        <div class="status-row">
-                            <div class="status-badge">{{ d.status }}</div>
-                            <div class="order-id">{% if d.current_order_id %}#{{ d.current_order_id }}{% endif %}</div>
+                        <div class="car-bottom">
+                            <div class="badge">{{ d.status }}</div>
+                            {% if d.current_order_id %}<div class="car-order">#{{ d.current_order_id }}</div>{% endif %}
                         </div>
                     </div>
                 {% endfor %}
+                {% if not drivers %}
+                    <div class="empty-msg">Mashinalar topilmadi</div>
+                {% endif %}
             </div>
         </div>
 
-        <div class="updates-section">
-            <div class="section-title">⏱ Oxirgi Yangilanishlar</div>
+        <!-- Recent Updates -->
+        <div class="panel">
+            <div class="panel-title">⏱ Oxirgi yangilanishlar</div>
             <div class="updates-list">
                 {% for u in stats.updates %}
-                <div class="update-item">
-                    <div class="up-id">Buyurtma #{{ u.order_id }}</div>
-                    <div class="up-car">🚗 {{ u.car_number }} ({{ u.driver_name }})</div>
-                    <div class="up-status">Holat: {{ u.current_status }}</div>
+                <div class="upd-item">
+                    <div class="upd-id">#{{ u.order_id }}</div>
+                    <div class="upd-car">🚗 {{ u.car_number }} · {{ u.driver_name }}</div>
+                    {% if u.address %}<div class="upd-addr">📍 {{ u.address }}</div>{% endif %}
+                    <div class="upd-status">{{ u.current_status }}</div>
                 </div>
                 {% endfor %}
                 {% if not stats.updates %}
-                <div style="color:gray; font-size: 20px; text-align: center; margin-top: 50px;">Hozircha ma'lumot yo'q</div>
+                    <div class="empty-msg">Hozircha ma'lumot yo'q</div>
                 {% endif %}
             </div>
         </div>
@@ -163,12 +221,17 @@
     <script>
         function updateClock() {
             const now = new Date();
-            document.getElementById('clock').innerText = now.toLocaleTimeString('uz-UZ', { hour12: false });
+            // Tashkent = UTC+5
+            const tashkent = new Date(now.getTime() + (5 * 60 - now.getTimezoneOffset()) * 60000);
+            const h = String(tashkent.getUTCHours()).padStart(2, '0');
+            const m = String(tashkent.getUTCMinutes()).padStart(2, '0');
+            const s = String(tashkent.getUTCSeconds()).padStart(2, '0');
+            document.getElementById('clock').textContent = h + ':' + m + ':' + s;
         }
         setInterval(updateClock, 1000);
         updateClock();
-        // Auto refresh every 15 seconds
-        setTimeout(() => { window.location.reload(); }, 15000);
+        // Auto-refresh every 10 seconds
+        setTimeout(() => { window.location.reload(); }, 10000);
     </script>
 </body>
 </html>
