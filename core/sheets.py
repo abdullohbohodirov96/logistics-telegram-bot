@@ -29,7 +29,7 @@ def get_sheets_service():
 
 def get_drivers():
     """Read driver list from DRIVERS sheet.
-    Columns: A=car_number, B=driver_name, C=driver_user_id, D=status, E=current_order_id, F=updated_at
+    Columns: A=driver_user_id, B=driver_name, C=car_number, D=status, E=current_order_id
     """
     sheets = get_sheets_service()
     if not sheets: return {}
@@ -44,25 +44,25 @@ def get_drivers():
         drivers = {}
         for row in values:
             if len(row) >= 3:
-                car_number = row[0].strip()
-                driver_name = row[1].strip()
                 try:
-                    telegram_id = int(row[2].strip())
+                    telegram_id = int(row[0].strip())
+                    driver_name = row[1].strip()
+                    car_number = row[2].strip()
+                    # We index by car_number for internal bot logic
                     drivers[car_number] = {
                         'driver_name': driver_name,
                         'telegram_id': telegram_id
                     }
                 except ValueError:
-                    logger.warning(f"Invalid telegram_id for driver {driver_name}")
+                    logger.warning(f"Invalid telegram_id in DRIVERS sheet")
         return drivers
     except Exception as e:
         logger.error(f"Error getting drivers: {e}")
         return {}
 
 def get_new_orders():
-    """Read new orders from ORDERS sheet.
-    Columns: A=order_id, B=driver_user_id, C=driver_name, D=car_number, E=status
-    We look for status = 'SEND' in column E.
+    """Read orders from ORDERS sheet.
+    Columns: A=order_id, B=car_number, C=address, D=cargo, E=comment, F=status
     """
     sheets = get_sheets_service()
     if not sheets: return []
@@ -70,18 +70,20 @@ def get_new_orders():
     try:
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='ORDERS!A2:E'
+            range='ORDERS!A2:F'
         ).execute()
         values = result.get('values', [])
         
         new_orders = []
         for i, row in enumerate(values):
-            if len(row) >= 5 and row[4].strip().upper() == 'SEND':
+            if len(row) >= 6 and row[5].strip().upper() == 'SEND':
                 order = {
                     'row_index': i + 2,
                     'order_id': row[0].strip(),
-                    'car_number': row[3].strip(),
-                    'driver_user_id': row[1].strip()
+                    'car_number': row[1].strip(),
+                    'address': row[2].strip() if len(row) > 2 else '',
+                    'cargo': row[3].strip() if len(row) > 3 else '',
+                    'comment': row[4].strip() if len(row) > 4 else ''
                 }
                 new_orders.append(order)
         return new_orders
@@ -90,12 +92,12 @@ def get_new_orders():
         return []
 
 def update_order_status(row_index: int, status: str):
-    """Update status column (E) in ORDERS sheet."""
+    """Update status column (F) in ORDERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return
     
     try:
-        range_name = f'ORDERS!E{row_index}'
+        range_name = f'ORDERS!F{row_index}'
         body = {'values': [[status]]}
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
@@ -109,19 +111,16 @@ def update_order_status(row_index: int, status: str):
 
 def update_driver_status_sheet(car_number: str, status: str, current_order_id: str = ""):
     """Update driver live status in DRIVERS sheet.
-    Columns: D=status, E=current_order_id, F=updated_at
+    Columns: A=driver_user_id, B=driver_name, C=car_number, D=status, E=current_order_id
     """
     sheets = get_sheets_service()
     if not sheets: return
     
     try:
-        from core.utils import get_now
-        now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Find the car row
+        # Find the car row by C column
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='DRIVERS!A:A'
+            range='DRIVERS!C:C'
         ).execute()
         values = result.get('values', [])
         
@@ -136,10 +135,10 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
             logger.warning(f"Car {car_number} not found in DRIVERS sheet")
             return
         
-        body = {'values': [[status, current_order_id, now_str]]}
+        body = {'values': [[status, current_order_id]]}
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'DRIVERS!D{row_idx}:F{row_idx}',
+            range=f'DRIVERS!D{row_idx}:E{row_idx}',
             valueInputOption='USER_ENTERED',
             body=body
         ).execute()
@@ -147,50 +146,18 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
     except Exception as e:
         logger.error(f"Error updating DRIVERS sheet: {e}")
 
-def append_order_to_history_sheet(order_data: dict):
-    """Append finished order to ORDERS sheet for history/mirror.
-    Columns: order_id, driver_user_id, driver_name, car_number, status, start_time, transit_exists, completed_at, duration_minutes, created_at
-    """
-    sheets = get_sheets_service()
-    if not sheets: return
-    
-    try:
-        row = [
-            order_data.get('order_id', ''),
-            order_data.get('driver_user_id', ''),
-            order_data.get('driver_name', ''),
-            order_data.get('car_number', ''),
-            order_data.get('status', 'DONE'),
-            order_data.get('start_time', ''),
-            str(order_data.get('transit_exists', False)),
-            order_data.get('completed_at', ''),
-            order_data.get('duration_minutes', ''),
-            order_data.get('created_at', '')
-        ]
-        
-        sheets.values().append(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range='ORDERS!A2',
-            valueInputOption='USER_ENTERED',
-            insertDataOption='INSERT_ROWS',
-            body={'values': [row]}
-        ).execute()
-        logger.info(f"Order {order_data.get('order_id')} appended to ORDERS sheet")
-    except Exception as e:
-        logger.error(f"Error appending to ORDERS sheet: {e}")
-
 def get_all_drivers_list():
     """Returns list of unique drivers [(name, tid), ...] from DRIVERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!B2:C').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:B').execute()
         rows = result.get('values', [])
         drivers = []
         seen = set()
         for row in rows:
             if len(row) >= 2:
-                name, tid = row[0].strip(), row[1].strip()
+                tid, name = row[0].strip(), row[1].strip()
                 if tid not in seen:
                     drivers.append((name, tid))
                     seen.add(tid)
@@ -204,7 +171,7 @@ def get_all_cars_list():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:A').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!C2:C').execute()
         rows = result.get('values', [])
         return sorted(list(set(row[0].strip() for row in rows if row)))
     except Exception as e:
@@ -216,7 +183,7 @@ def get_drivers_status():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:F').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:E').execute()
         return result.get('values', [])
     except Exception as e:
         logger.error(f"Error getting drivers status from sheet: {e}")

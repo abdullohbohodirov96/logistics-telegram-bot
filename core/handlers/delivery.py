@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 
 from core.config import TIMEZONE, GROUP_CHAT_ID
 from core.db import get_order, update_order, save_order_step, get_order_steps
-from core.sheets import update_order_status, update_driver_status_sheet, append_order_to_history_sheet, get_sheets_service
+from core.sheets import update_order_status, update_driver_status_sheet, get_sheets_service
 from core.states import DeliveryProcess
 import core.keyboards as kb
 
@@ -353,20 +353,23 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
         if order:
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO‘SH', '')
             
-            # Mirror to ORDERS sheet
-            history_data = {
-                'order_id': order_id,
-                'driver_user_id': str(order.get('driver_telegram_id', '')),
-                'driver_name': order.get('driver_name', ''),
-                'car_number': order.get('car_number', ''),
-                'status': 'DONE',
-                'start_time': start_time_str,
-                'transit_exists': order.get('transit_exists', False),
-                'completed_at': t,
-                'duration_minutes': duration_minutes,
-                'created_at': order.get('created_at', '')
-            }
-            await asyncio.to_thread(append_order_to_history_sheet, history_data)
+            # Update ORDERS sheet status to DONE
+            try:
+                sheets = await asyncio.to_thread(get_sheets_service)
+                if sheets:
+                    # Find the order row
+                    res = await asyncio.to_thread(sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='ORDERS!A:A').execute)
+                    vals = res.get('values', [])
+                    row_idx = -1
+                    for i, row in enumerate(vals):
+                        if row and row[0].strip() == order_id:
+                            row_idx = i + 1
+                            break
+                    
+                    if row_idx != -1:
+                        await asyncio.to_thread(update_order_status, row_idx, 'DONE')
+            except Exception as e:
+                logger.error(f"Error updating ORDERS status on finish: {e}")
 
         await update_group_message(bot, order_id)
         

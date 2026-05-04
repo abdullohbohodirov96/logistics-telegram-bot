@@ -108,10 +108,11 @@ def sheets_read_cars() -> list:
         
         cars = []
         for row in rows:
-            if len(row) < 2:
+            if len(row) < 3:
                 continue
-            cn = row[0].strip()
+            
             dn = row[1].strip()
+            cn = row[2].strip()
             if not cn:
                 continue
             
