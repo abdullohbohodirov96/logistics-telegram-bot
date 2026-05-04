@@ -145,3 +145,35 @@ def get_all_drivers_status_db():
         logger.error(f"Error getting all drivers status from Supabase: {e}")
         return []
 
+def get_dashboard_stats():
+    try:
+        if not supabase: return {"active": 0, "finished_today": 0, "failed": 0, "updates": []}
+        import datetime
+        import pytz
+        tz = pytz.timezone('Asia/Tashkent')
+        now = datetime.datetime.now(tz)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        # Active orders (not DONE, not ERROR)
+        active_resp = supabase.table('orders').select('id', count='exact').neq('current_status', 'DONE').neq('current_status', 'ERROR_BOT_BLOCKED').execute()
+        active_count = active_resp.count if active_resp.count else 0
+        
+        # Finished today
+        finished_resp = supabase.table('orders').select('id', count='exact').eq('current_status', 'DONE').gte('completed_at', today_start).execute()
+        finished_count = finished_resp.count if finished_resp.count else 0
+        
+        failed_resp = supabase.table('orders').select('id', count='exact').eq('current_status', 'ERROR_BOT_BLOCKED').execute()
+        failed_count = failed_resp.count if failed_resp.count else 0
+        
+        recent_resp = supabase.table('orders').select('order_id, car_number, current_status, driver_name').order('created_at', desc=True).limit(5).execute()
+        recent_updates = recent_resp.data if recent_resp.data else []
+        
+        return {
+            "active": active_count,
+            "finished_today": finished_count,
+            "failed": failed_count,
+            "updates": recent_updates
+        }
+    except Exception as e:
+        logger.error(f"Error getting dashboard stats: {e}")
+        return {"active": 0, "finished_today": 0, "failed": 0, "updates": []}

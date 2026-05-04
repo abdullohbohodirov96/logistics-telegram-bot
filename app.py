@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from core.db import get_all_drivers_status_db
+from core.db import get_all_drivers_status_db, get_dashboard_stats
 import uvicorn
 from dotenv import load_dotenv
 
@@ -14,13 +14,10 @@ app = FastAPI(title="Logistics Dashboard")
 # Ensure templates directory exists or create it
 templates = Jinja2Templates(directory="templates")
 
-@app.get("/")
-def home():
-    return {"status": "Dashboard is running"}
-
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     drivers = get_all_drivers_status_db()
+    stats = get_dashboard_stats()
     
     total = len(drivers)
     free = sum(1 for d in drivers if d.get('status') == 'BO‘SH')
@@ -31,7 +28,8 @@ async def dashboard(request: Request):
             "drivers": drivers,
             "total": total,
             "free": free,
-            "busy": busy
+            "busy": busy,
+            "stats": stats
         }
     )
 
