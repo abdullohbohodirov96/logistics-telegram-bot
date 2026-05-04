@@ -3,9 +3,9 @@ import logging
 from aiogram import Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.config import BOT_TOKEN, POLL_INTERVAL_SECONDS
-from app.handlers import router
-from app.scheduler import check_sheets_job
+from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS
+from core.handlers import router
+from core.scheduler import check_sheets_job
 
 logging.basicConfig(
     level=logging.INFO,

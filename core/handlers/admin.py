@@ -5,12 +5,12 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from app.config import ADMIN_IDS, TIMEZONE
-from app.db import get_history, get_unique_cars, get_unique_drivers, get_active_orders
-import app.keyboards as kb
-from app.sheets import get_drivers_status
-from app.states import AdminProcess
-from app.handlers.history import format_delivery_short, format_delivery_detailed
+from core.config import ADMIN_IDS, TIMEZONE
+from core.db import get_history, get_unique_cars, get_unique_drivers, get_active_orders
+import core.keyboards as kb
+from core.sheets import get_drivers_status
+from core.states import AdminProcess
+from core.handlers.history import format_delivery_short, format_delivery_detailed
 
 router = Router()
 tz = pytz.timezone(TIMEZONE)

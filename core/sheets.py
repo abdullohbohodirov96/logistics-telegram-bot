@@ -1,8 +1,8 @@
 import logging
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from app.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID
-from app.db import upsert_driver_status
+from core.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID
+from core.db import upsert_driver_status
 
 logger = logging.getLogger(__name__)
 

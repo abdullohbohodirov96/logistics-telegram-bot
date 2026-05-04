@@ -6,11 +6,11 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
-from app.config import TIMEZONE, GROUP_CHAT_ID
-from app.db import get_order, update_order, save_order_step, get_order_steps
-from app.sheets import update_order_status, update_driver_status_sheet
-from app.states import DeliveryProcess
-import app.keyboards as kb
+from core.config import TIMEZONE, GROUP_CHAT_ID
+from core.db import get_order, update_order, save_order_step, get_order_steps
+from core.sheets import update_order_status, update_driver_status_sheet
+from core.states import DeliveryProcess
+import core.keyboards as kb
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -335,8 +335,8 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
                 except Exception as e:
                     logger.error(f"Error sending media group: {e}")
         
-        from app.sheets import get_sheets_service
-        from app.config import GOOGLE_SHEET_ID
+        from core.sheets import get_sheets_service
+        from core.config import GOOGLE_SHEET_ID
         try:
             sheets = await asyncio.to_thread(get_sheets_service)
             if sheets:

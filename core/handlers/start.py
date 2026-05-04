@@ -1,8 +1,8 @@
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
-from app.config import ADMIN_IDS
-import app.keyboards as kb
+from core.config import ADMIN_IDS
+import core.keyboards as kb
 
 router = Router()
 

@@ -1,6 +1,6 @@
 import logging
 from supabase import create_client, Client
-from app.config import SUPABASE_URL, SUPABASE_KEY
+from core.config import SUPABASE_URL, SUPABASE_KEY
 
 logger = logging.getLogger(__name__)
 

@@ -1,9 +1,9 @@
 import logging
 import asyncio
 from aiogram import Bot
-from app.sheets import get_new_orders, get_drivers, update_order_status, update_driver_status_sheet
-from app.db import create_order
-import app.keyboards as kb
+from core.sheets import get_new_orders, get_drivers, update_order_status, update_driver_status_sheet
+from core.db import create_order
+import core.keyboards as kb
 
 logger = logging.getLogger(__name__)
 

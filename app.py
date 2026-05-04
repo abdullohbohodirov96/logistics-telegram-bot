@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from app.db import get_all_drivers_status_db
+from core.db import get_all_drivers_status_db
 import uvicorn
 from dotenv import load_dotenv
 
@@ -13,6 +13,10 @@ app = FastAPI(title="Logistics Dashboard")
 
 # Ensure templates directory exists or create it
 templates = Jinja2Templates(directory="templates")
+
+@app.get("/")
+def home():
+    return {"status": "Dashboard is running"}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):

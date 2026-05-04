@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from app.db import get_history, get_order, get_order_steps
-import app.keyboards as kb
+from core.db import get_history, get_order, get_order_steps
+import core.keyboards as kb
 
 router = Router()
 
