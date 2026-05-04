@@ -120,6 +120,14 @@ def get_transit_done_kb(order_id: str):
         [InlineKeyboardButton(text="✅ Nuqtalarni tugatish", callback_data=f"transit_done_{order_id}")]
     ])
 
+def get_transit_kb(order_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Ha, transit bor", callback_data=f"tr_y_{order_id}"),
+            InlineKeyboardButton(text="Yo‘q, transit yo‘q", callback_data=f"tr_n_{order_id}")
+        ]
+    ])
+
 def get_finish_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Tushirib bo'ldim", callback_data=f"finish_{order_id}")]

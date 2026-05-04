@@ -28,22 +28,18 @@ def format_delivery_short(order):
             start_time = st.strftime("%H:%M")
         except:
             pass
-    if order.get('finish_time'):
+    if order.get('completed_at'):
         try:
             from datetime import datetime
-            ft = datetime.fromisoformat(order['finish_time'])
+            ft = datetime.fromisoformat(order['completed_at'])
             end_time = ft.strftime("%H:%M")
         except:
             pass
     
     text = f"#{order['order_id']} | {order['car_number']}\n"
     text += f"Haydovchi: {order['driver_name']}\n"
-    
-    st_map = {'base': '🏢 Baza', 'supplier': '🏭 Pastavshik', 'other': '📍 Boshqa', 'transit': '🔁 Transit'}
-    stype = order.get('source_type')
-    if stype:
-        text += f"Joy: {st_map.get(stype, stype)}\n"
-        
+    if order.get('transit_status'):
+        text += f"Transit: {order['transit_status']}\n"
     text += f"Manzil: {order['address']}\n"
     text += f"Oldi: {start_time} | Yetkazdi: {end_time}\n"
     if order.get('duration_minutes'):
@@ -60,20 +56,8 @@ def format_delivery_detailed(order):
     text = f"📦 Buyurtma: #{order['order_id']}\n"
     text += f"Haydovchi: {order['driver_name']} (ID: {order['driver_telegram_id']})\n"
     text += f"Mashina: {order['car_number']}\n"
-    
-    st_map = {'base': '🏢 Bizning baza/sklad', 'supplier': '🏭 Pastavshikdan', 'other': '📍 Boshqa joydan', 'transit': '🔁 Transit'}
-    stype = order.get('source_type')
-    if stype:
-        text += f"Yuk olish joyi: {st_map.get(stype, stype)}\n"
-        if order.get('pickup_place_name'):
-            text += f"Joy nomi: {order['pickup_place_name']}\n"
-        if order.get('pickup_location'):
-            text += f"Pickup lokatsiya: https://maps.google.com/?q={order['pickup_location']}\n"
-        if order.get('transit_points'):
-            try:
-                points = json.loads(order['transit_points'])
-                text += f"Transit nuqtalari: {', '.join(points)}\n"
-            except: pass
+    if order.get('transit_status'):
+        text += f"Transit: {order['transit_status']}\n"
 
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"

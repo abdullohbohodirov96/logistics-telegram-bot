@@ -2,7 +2,6 @@ import logging
 from datetime import datetime
 import pytz
 import asyncio
-import json
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
@@ -77,23 +76,8 @@ async def update_group_message(bot: Bot, order_id: str):
     text += f"Manzil: {order['address']}\n"
     text += f"Yuk: {order['cargo']}\n"
     
-    source_type = order.get('source_type')
-    if source_type:
-        st_map = {
-            'base': '🏢 Bizning baza/sklad',
-            'supplier': '🏭 Pastavshikdan',
-            'other': '📍 Boshqa joydan',
-            'transit': '🔁 Transit'
-        }
-        text += f"Yuk olish joyi: {st_map.get(source_type, source_type)}\n"
-        if order.get('pickup_place_name'):
-            text += f"Joy nomi: {order['pickup_place_name']}\n"
-        if order.get('transit_points'):
-            try:
-                points = json.loads(order['transit_points'])
-                text += f"Transit nuqtalari: {', '.join(points)}\n"
-            except:
-                pass
+    if order.get('transit_status'):
+        text += f"Transit: {order['transit_status']}\n"
 
     text += "\n"
 
@@ -120,7 +104,7 @@ async def update_group_message(bot: Bot, order_id: str):
         logger.error(f"Error editing group message: {e}")
 
 @router.callback_query(F.data.startswith("take_"))
-async def handle_take_delivery(callback: CallbackQuery, state: FSMContext):
+async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
     await callback.answer("✅ Qabul qilindi")
     order_id = callback.data.split("_")[1]
     
@@ -135,141 +119,35 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext):
         'step_name': 'take_delivery',
         'time_text': t
     })
-    
-    await state.update_data(order_id=order_id)
-    await callback.message.edit_text("Yuk qayerdan olinadi?", reply_markup=kb.get_source_type_kb(order_id))
 
-@router.callback_query(F.data.startswith("src_"))
-async def handle_source_selection(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    await callback.answer("✅ Qabul qilindi")
-    parts = callback.data.split("_")
-    source_type = parts[1]
-    order_id = parts[2]
-    
-    await asyncio.to_thread(update_order, order_id, {'source_type': source_type})
-    
-    if source_type == 'base':
-        await callback.message.edit_text("A-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
-        # Start tracking in group/sheets
-        asyncio.create_task(finalize_source_and_start(bot, order_id))
-    elif source_type == 'supp':
-        await state.set_state(DeliveryProcess.waiting_for_supplier_name)
-        await callback.message.edit_text("Pastavshik nomini kiriting:")
-    elif source_type == 'other':
-        await state.set_state(DeliveryProcess.waiting_for_other_place_name)
-        await callback.message.edit_text("Yuk olish joyi nomini kiriting:")
-    elif source_type == 'transit':
-        await state.update_data(transit_points=[])
-        await state.set_state(DeliveryProcess.waiting_for_transit_point)
-        await callback.message.edit_text("1-yuk qayerdan olinadi? (Nomini yozing):")
-
-async def finalize_source_and_start(bot: Bot, order_id: str):
-    order = await asyncio.to_thread(get_order, order_id)
-    if not order: return
-    
-    t = get_current_time()
-    await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BAND', order_id)
-    
-    if should_send_to_group():
-        text = f"🚚 Yetkazib berish #{order_id}\n"
-        text += f"Haydovchi: {order['driver_name']}\n"
-        text += f"Mashina: {order['car_number']}\n"
-        text += f"Manzil: {order['address']}\n"
-        text += f"Yuk: {order['cargo']}\n"
+    # Run background tasks (Sheets + Group notification)
+    async def bg_task():
+        await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BAND', order_id)
         
-        st_map = {'base': '🏢 Bizning baza/sklad', 'supplier': '🏭 Pastavshikdan', 'other': '📍 Boshqa joydan', 'transit': '🔁 Transit'}
-        text += f"Yuk olish joyi: {st_map.get(order.get('source_type'), '')}\n"
-        if order.get('pickup_place_name'):
-            text += f"Joy nomi: {order['pickup_place_name']}\n"
-        if order.get('transit_points'):
+        if should_send_to_group():
+            text = f"🚚 Yetkazib berish #{order_id}\n"
+            text += f"Haydovchi: {order['driver_name']}\n"
+            text += f"Mashina: {order['car_number']}\n"
+            text += f"Manzil: {order['address']}\n"
+            text += f"Yuk: {order['cargo']}\n\n"
+            text += f"Holat: 🚚 Yo‘lda\n"
+            text += f"Oldi: {t}\n"
+            text += f"Oxirgi bosqich: Vazifani oldi — {t}\n"
+
             try:
-                points = json.loads(order['transit_points'])
-                text += f"Transit nuqtalari: {', '.join(points)}\n"
-            except: pass
-            
-        text += f"\nHolat: 🚚 Yo‘lda\n"
-        text += f"Oldi: {t}\n"
-        text += f"Oxirgi bosqich: Vazifani oldi — {t}\n"
+                msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
+                await asyncio.to_thread(update_order, order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
+            except Exception as e:
+                logger.error(f"Error sending to group: {e}")
+        else:
+            await asyncio.to_thread(update_order, order_id, {'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
 
-        try:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, disable_web_page_preview=True)
-            await asyncio.to_thread(update_order, order_id, {'group_message_id': msg.message_id, 'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
-        except Exception as e:
-            logger.error(f"Error sending to group: {e}")
-    else:
-        await asyncio.to_thread(update_order, order_id, {'current_status': 'take_delivery', 'start_time': datetime.now(tz).isoformat()})
+    asyncio.create_task(bg_task())
 
-@router.message(DeliveryProcess.waiting_for_supplier_name, F.text)
-async def process_supplier_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    data = await state.get_data()
-    order_id = data.get('order_id')
-    
-    await asyncio.to_thread(update_order, order_id, {'pickup_place_name': name})
-    await state.set_state(DeliveryProcess.waiting_for_pickup_location)
-    await message.answer(f"Pastavshik '{name}' uchun lokatsiyani yuboring:", reply_markup=kb.get_request_location_kb())
+    await callback.message.edit_text("✅ Yetkazib berish qabul qilindi.")
+    await callback.message.answer("A-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
 
-@router.message(DeliveryProcess.waiting_for_other_place_name, F.text)
-async def process_other_place_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    data = await state.get_data()
-    order_id = data.get('order_id')
-    
-    await asyncio.to_thread(update_order, order_id, {'pickup_place_name': name})
-    await state.set_state(DeliveryProcess.waiting_for_pickup_location)
-    await message.answer(f"'{name}' uchun lokatsiyani yuboring:", reply_markup=kb.get_request_location_kb())
-
-@router.message(DeliveryProcess.waiting_for_pickup_location, F.location)
-async def process_pickup_location(message: Message, state: FSMContext, bot: Bot):
-    lat = message.location.latitude
-    lng = message.location.longitude
-    loc_str = f"{lat},{lng}"
-    data = await state.get_data()
-    order_id = data.get('order_id')
-    
-    await asyncio.to_thread(update_order, order_id, {'pickup_location': loc_str})
-    await state.clear()
-    
-    # After location, move to load photo
-    await state.update_data(order_id=order_id)
-    await state.set_state(DeliveryProcess.waiting_for_load_photo)
-    await message.answer("Lokatsiya qabul qilindi. 📸 Mashinaga ortilgan yuk rasmini yuboring.", reply_markup=kb.remove_reply_kb())
-    
-    # Start tracking
-    asyncio.create_task(finalize_source_and_start(bot, order_id))
-
-@router.message(DeliveryProcess.waiting_for_transit_point, F.text)
-async def process_transit_point(message: Message, state: FSMContext):
-    point = message.text.strip()
-    data = await state.get_data()
-    points = data.get('transit_points', [])
-    order_id = data.get('order_id')
-    
-    points.append(point)
-    await state.update_data(transit_points=points)
-    
-    await message.answer(f"{len(points)}-nuqta saqlandi. Keyingi yuk qayerdan olinadi? (Yana nuqta bo'lsa yozing, bo'lmasa tugmani bosing):", 
-                         reply_markup=kb.get_transit_done_kb(order_id))
-
-@router.callback_query(F.data.startswith("transit_done_"))
-async def handle_transit_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    await callback.answer("✅ Qabul qilindi")
-    data = await state.get_data()
-    order_id = data.get('order_id')
-    points = data.get('transit_points', [])
-    
-    await asyncio.to_thread(update_order, order_id, {'transit_points': json.dumps(points)})
-    await state.clear()
-    
-    # Move to load photo
-    await state.update_data(order_id=order_id)
-    await state.set_state(DeliveryProcess.waiting_for_load_photo)
-    await callback.message.edit_text(f"Transit nuqtalari ({len(points)} ta) saqlandi. 📸 Mashinaga ortilgan yuk rasmini yuboring.")
-    
-    # Start tracking
-    asyncio.create_task(finalize_source_and_start(bot, order_id))
-
-# --- Original Flow Resumes ---
+ZONES = ["A", "B", "C", "D"]
 
 @router.callback_query(F.data.startswith("z_"))
 async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
@@ -282,7 +160,12 @@ async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
     t = get_current_time()
     
     async def bg_task():
-        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': f'zone_{zone}', 'step_value': val, 'time_text': t})
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': f'zone_{zone}',
+            'step_value': val,
+            'time_text': t
+        })
         order = await asyncio.to_thread(get_order, order_id)
         if order:
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YUK ORTYAPTI', order_id)
@@ -292,15 +175,34 @@ async def handle_zones(callback: CallbackQuery, bot: Bot, state: FSMContext):
     action_text = "✅ Oldim" if val == 'y' else "❌ Olmadim"
     await callback.message.edit_text(f"{zone}-blok: {action_text}")
     
-    ZONES = ["A", "B", "C", "D"]
     current_index = ZONES.index(zone)
     if current_index + 1 < len(ZONES):
         next_zone = ZONES[current_index + 1]
         await callback.message.answer(f"{next_zone}-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb(next_zone, order_id))
     else:
-        await state.update_data(order_id=order_id, message_id=callback.message.message_id)
-        await state.set_state(DeliveryProcess.waiting_for_load_photo)
-        await callback.message.answer("📸 Mashinaga ortilgan yuk rasmini yuboring.")
+        # After D-blok, ask for transit
+        await callback.message.answer("Transit bormi?", reply_markup=kb.get_transit_kb(order_id))
+
+@router.callback_query(F.data.startswith("tr_"))
+async def handle_transit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("✅ Qabul qilindi")
+    parts = callback.data.split("_")
+    val = parts[1] # y or n
+    order_id = parts[2]
+    
+    transit_exists = (val == 'y')
+    transit_status = "Ha, bor" if transit_exists else "Yo'q"
+    
+    await asyncio.to_thread(update_order, order_id, {
+        'transit_exists': transit_exists,
+        'transit_status': transit_status
+    })
+    
+    await callback.message.edit_text(f"Transit: {transit_status}")
+    
+    await state.update_data(order_id=order_id)
+    await state.set_state(DeliveryProcess.waiting_for_load_photo)
+    await callback.message.answer("📸 Mashinaga ortilgan yuk rasmini yuboring.")
 
 @router.message(DeliveryProcess.waiting_for_load_photo, F.photo)
 async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
@@ -310,7 +212,12 @@ async def process_load_photo(message: Message, state: FSMContext, bot: Bot):
     t = get_current_time()
     
     async def bg_task():
-        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'photo_load', 'time_text': t, 'photo_file_id': photo_id})
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'photo_load',
+            'time_text': t,
+            'photo_file_id': photo_id
+        })
         await update_group_message(bot, order_id)
         
     asyncio.create_task(bg_task())
@@ -332,6 +239,7 @@ async def start_drive(callback: CallbackQuery, bot: Bot):
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YO‘LDA', order_id)
             
     asyncio.create_task(bg_task())
+    
     await callback.message.edit_text("Siz yo'ldasiz. Manzilga yetib kelgach tugmani bosing.", reply_markup=kb.get_arrived_kb(order_id))
 
 @router.callback_query(F.data.startswith("arrived_"))
@@ -348,6 +256,7 @@ async def arrived(callback: CallbackQuery, bot: Bot, state: FSMContext):
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'YETIB BORDI', order_id)
             
     asyncio.create_task(bg_task())
+    
     await callback.message.edit_text("📍 Manzilga yetib keldingiz.")
     await state.update_data(order_id=order_id)
     await state.set_state(DeliveryProcess.waiting_for_location)
@@ -357,13 +266,21 @@ async def arrived(callback: CallbackQuery, bot: Bot, state: FSMContext):
 async def process_location(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     order_id = data.get('order_id')
-    lat, lng = message.location.latitude, message.location.longitude
+    lat = message.location.latitude
+    lng = message.location.longitude
     t = get_current_time()
     
     async def bg_task():
-        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'location', 'time_text': t, 'location_lat': lat, 'location_lng': lng})
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'location',
+            'time_text': t,
+            'location_lat': lat,
+            'location_lng': lng
+        })
         
     asyncio.create_task(bg_task())
+    
     await state.set_state(DeliveryProcess.waiting_for_unload_photo)
     await message.answer("Lokatsiya qabul qilindi. 📸 Manzilga yetib kelganingizdagi yuk/mashina rasmini yuboring.", reply_markup=kb.remove_reply_kb())
 
@@ -375,9 +292,15 @@ async def process_obj_photo(message: Message, state: FSMContext, bot: Bot):
     t = get_current_time()
     
     async def bg_task():
-        await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'photo_obj', 'time_text': t, 'photo_file_id': photo_id})
+        await asyncio.to_thread(save_order_step, {
+            'order_id': order_id,
+            'step_name': 'photo_obj',
+            'time_text': t,
+            'photo_file_id': photo_id
+        })
         
     asyncio.create_task(bg_task())
+    
     await message.answer("Rasm qabul qilindi. Yuk tushirib bo'lingach tugmani bosing.", reply_markup=kb.get_finish_kb(order_id))
     await state.clear()
 
@@ -391,21 +314,30 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
     
     async def bg_task():
         now = datetime.now(tz)
+        
         await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'finish', 'time_text': t})
         order = await asyncio.to_thread(get_order, order_id)
         
+        # Calculate duration
+        start_time_obj = None
         duration_minutes = None
         if order and order.get('start_time'):
             try:
                 start_time_obj = datetime.fromisoformat(order['start_time'])
                 duration_td = now - start_time_obj
                 duration_minutes = int(duration_td.total_seconds() / 60)
-            except: pass
+            except:
+                pass
 
-        update_payload = {'current_status': 'DONE', 'completed_at': now.isoformat(), 'finish_time': now.isoformat()}
-        if duration_minutes is not None: update_payload['duration_minutes'] = duration_minutes
+        update_payload = {
+            'current_status': 'DONE', 
+            'completed_at': now.isoformat()
+        }
+        if duration_minutes is not None:
+            update_payload['duration_minutes'] = duration_minutes
             
         await asyncio.to_thread(update_order, order_id, update_payload)
+        
         if order:
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], order['driver_name'], order['driver_telegram_id'], 'BO‘SH', '')
 
@@ -418,21 +350,25 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
                 if s['step_name'] in ['photo_load', 'photo_obj'] and s.get('photo_file_id'):
                     caption = "Yuklangan rasm" if s['step_name'] == 'photo_load' else "Manzildagi rasm"
                     photos.append(InputMediaPhoto(media=s['photo_file_id'], caption=f"{caption} (#{order_id})"))
+            
             if photos:
-                try: await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=photos)
-                except Exception as e: logger.error(f"Error sending media group: {e}")
+                try:
+                    await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=photos)
+                except Exception as e:
+                    logger.error(f"Error sending media group: {e}")
         
         from core.sheets import get_sheets_service
         from core.config import GOOGLE_SHEET_ID
         try:
             sheets = await asyncio.to_thread(get_sheets_service)
             if sheets:
-                res = await asyncio.to_thread(sheets.values().get, spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F')
+                res = await asyncio.to_thread(sheets.values().get, spreadsheetId=GOOGLE_SHEET_ID, range='orders!A:F').execute()
                 vals = res.get('values', [])
                 for i, row in enumerate(vals):
                     if len(row) > 0 and row[0].strip() == order_id:
                         await asyncio.to_thread(update_order_status, i + 1, 'DONE')
                         break
-        except Exception as e: logger.error(f"Error updating sheet to DONE: {e}")
+        except Exception as e:
+            logger.error(f"Error updating sheet to DONE: {e}")
 
     asyncio.create_task(bg_task())
