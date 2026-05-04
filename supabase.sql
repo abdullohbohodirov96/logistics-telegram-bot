@@ -16,6 +16,12 @@ create table public.orders (
     duration_minutes integer
 );
 
+-- Performance indexes for fast filtering
+create index idx_orders_driver_tid on public.orders(driver_telegram_id);
+create index idx_orders_car_number on public.orders(car_number);
+create index idx_orders_status on public.orders(current_status);
+create index idx_orders_created_at on public.orders(created_at desc);
+
 create table public.order_steps (
     id uuid primary key default gen_random_uuid(),
     order_id text,
@@ -27,6 +33,8 @@ create table public.order_steps (
     location_lng double precision,
     created_at timestamptz default now()
 );
+
+create index idx_steps_order_id on public.order_steps(order_id);
 
 create table public.drivers_status (
     car_number text primary key,

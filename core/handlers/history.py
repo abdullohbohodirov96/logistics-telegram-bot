@@ -1,28 +1,42 @@
+import asyncio
+import time
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from core.db import get_history, get_order, get_order_steps
 import core.keyboards as kb
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 def format_delivery_short(order):
-    steps = get_order_steps(order['order_id'])
-    start_time = "Noma'lum"
-    end_time = "Noma'lum"
-    has_finish_step = False
-    for s in steps:
-        if s['step_name'] == 'take_delivery':
-            start_time = s['time_text']
-        if s['step_name'] == 'finish':
-            end_time = s['time_text']
-            has_finish_step = True
-            
+    """Format order summary WITHOUT extra DB call.
+    Uses duration_minutes/start_time/finish_time from the order row itself.
+    Falls back to current_status for done detection.
+    """
     is_done = (
         order.get('current_status') == 'DONE' or 
-        order.get('completed_at') is not None or 
-        has_finish_step
+        order.get('completed_at') is not None
     )
     status = "✅ Yakunlandi" if is_done else "🚚 Davom etmoqda"
+    
+    # Use start_time/finish_time from order row directly — no extra DB call
+    start_time = "Noma'lum"
+    end_time = "Noma'lum"
+    if order.get('start_time'):
+        try:
+            from datetime import datetime
+            st = datetime.fromisoformat(order['start_time'])
+            start_time = st.strftime("%H:%M")
+        except:
+            pass
+    if order.get('finish_time'):
+        try:
+            from datetime import datetime
+            ft = datetime.fromisoformat(order['finish_time'])
+            end_time = ft.strftime("%H:%M")
+        except:
+            pass
     
     text = f"#{order['order_id']} | {order['car_number']}\n"
     text += f"Manzil: {order['address']}\n"
@@ -37,6 +51,7 @@ def format_delivery_short(order):
     return text
 
 def format_delivery_detailed(order):
+    """Detailed format — only called for single order detail view, so DB call is acceptable."""
     steps = get_order_steps(order['order_id'])
     
     text = f"📦 Buyurtma: #{order['order_id']}\n"
@@ -105,7 +120,7 @@ def format_delivery_detailed(order):
         elif name == 'photo_load':
             text += f"📸 Yuklangan rasm — {t}\n"
         elif name == 'start_drive':
-            text += f"🚚 Yo‘lga chiqdi — {t}\n"
+            text += f"🚚 Yo'lga chiqdi — {t}\n"
         elif name == 'arrived':
             text += f"📍 Manzilga yetdi — {t}\n"
         elif name == 'location':
@@ -119,8 +134,9 @@ def format_delivery_detailed(order):
 
 @router.message(F.text == "📋 Mening tarixim")
 async def my_history(message: Message):
+    t0 = time.time()
     tid = message.from_user.id
-    history = get_history('drv', str(tid))
+    history = await asyncio.to_thread(get_history, 'drv', str(tid))
     if not history:
         await message.answer("Sizda hali tarix yo'q.")
         return
@@ -136,14 +152,17 @@ async def my_history(message: Message):
         
     if total_pages > 1:
         await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
+    
+    logger.info(f"my_history: {time.time() - t0:.2f}s")
 
 @router.callback_query(F.data.startswith("m:p:") | F.data.startswith("m:n:"))
 async def paginate_my_history(callback: CallbackQuery):
+    await callback.answer()
     action, page_str = callback.data.split(":")[1:]
     page = int(page_str)
     
     tid = callback.from_user.id
-    history = get_history('drv', str(tid))
+    history = await asyncio.to_thread(get_history, 'drv', str(tid))
     
     total_pages = (len(history) + 4) // 5
     start_idx = (page - 1) * 5
@@ -157,16 +176,15 @@ async def paginate_my_history(callback: CallbackQuery):
         await callback.message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
     await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
-    await callback.answer()
 
 @router.callback_query(F.data.startswith("detail:"))
 async def show_delivery_details(callback: CallbackQuery):
+    await callback.answer()
     order_id = callback.data.split("detail:")[1]
-    order = get_order(order_id)
+    order = await asyncio.to_thread(get_order, order_id)
     if not order:
-        await callback.answer("Buyurtma topilmadi.", show_alert=True)
+        await callback.message.answer("Buyurtma topilmadi.")
         return
         
-    text = format_delivery_detailed(order)
+    text = await asyncio.to_thread(format_delivery_detailed, order)
     await callback.message.answer(text)
-    await callback.answer()

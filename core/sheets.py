@@ -8,7 +8,13 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
+# Cache the Sheets service object — building it every call is ~300ms wasted
+_sheets_service = None
+
 def get_sheets_service():
+    global _sheets_service
+    if _sheets_service is not None:
+        return _sheets_service
     if not GOOGLE_SERVICE_ACCOUNT_INFO or not GOOGLE_SHEET_ID:
         logger.error("Google Sheets credentials not configured.")
         return None
@@ -16,7 +22,8 @@ def get_sheets_service():
         creds = service_account.Credentials.from_service_account_info(
             GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         service = build('sheets', 'v4', credentials=creds)
-        return service.spreadsheets()
+        _sheets_service = service.spreadsheets()
+        return _sheets_service
     except Exception as e:
         logger.error(f"Error initializing Sheets service: {e}")
         return None

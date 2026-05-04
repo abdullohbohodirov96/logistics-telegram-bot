@@ -1,4 +1,5 @@
 import logging
+import time
 from supabase import create_client, Client
 from core.config import SUPABASE_URL, SUPABASE_KEY
 
@@ -67,6 +68,7 @@ def get_order_steps(order_id: str):
 def get_unique_cars():
     try:
         if not supabase: return []
+        # Only select needed column
         response = supabase.table('orders').select('car_number').execute()
         cars = set(row['car_number'] for row in response.data if row.get('car_number'))
         return list(cars)
@@ -77,6 +79,7 @@ def get_unique_cars():
 def get_unique_drivers():
     try:
         if not supabase: return []
+        # Only select needed columns
         response = supabase.table('orders').select('driver_telegram_id, driver_name').execute()
         drivers = {}
         for row in response.data:
@@ -92,13 +95,14 @@ def get_unique_drivers():
 def get_active_orders():
     try:
         if not supabase: return []
-        response = supabase.table('orders').select('*').neq('current_status', 'DONE').order('created_at', desc=True).execute()
+        response = supabase.table('orders').select('*').neq('current_status', 'DONE').order('created_at', desc=True).limit(50).execute()
         return response.data
     except Exception as e:
         logger.error(f"Error getting active orders: {e}")
         return []
 
 def get_history(filter_type: str, filter_val: str, date_from: str = None, date_to: str = None):
+    t0 = time.time()
     try:
         if not supabase: return []
         
@@ -114,8 +118,11 @@ def get_history(filter_type: str, filter_val: str, date_from: str = None, date_t
         if date_to:
             query = query.lte('created_at', date_to)
             
-        query = query.order('created_at', desc=True)
+        query = query.order('created_at', desc=True).limit(100)
         response = query.execute()
+        
+        elapsed = time.time() - t0
+        logger.info(f"get_history({filter_type}, {filter_val}): {len(response.data)} rows in {elapsed:.2f}s")
         return response.data
     except Exception as e:
         logger.error(f"Error getting history: {e}")
