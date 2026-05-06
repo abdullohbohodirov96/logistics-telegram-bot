@@ -31,7 +31,15 @@ def get_sheets_service():
 
 def normalize_car(val: str):
     if not val: return ""
-    return re.sub(r'[^A-Z0-9]', '', str(val).strip().upper())
+    # Replace common Cyrillic characters with Latin equivalents
+    val = str(val).upper().strip()
+    replacements = {
+        'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H',
+        'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X'
+    }
+    for cyr, lat in replacements.items():
+        val = val.replace(cyr, lat)
+    return re.sub(r'[^A-Z0-9]', '', val)
 
 def clean_tid(val: str):
     if not val: return None
