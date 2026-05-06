@@ -14,3 +14,11 @@ class DeliveryStates(StatesGroup):
     ACT_PHOTO = State()
     DELIVERED_LOC = State()
     WAITING_FINISH = State()
+
+class AdminProcess(StatesGroup):
+    waiting_for_manual_date = State()
+    waiting_for_order_id = State()
+    waiting_for_driver = State()
+    waiting_for_message = State()
+    waiting_for_photo = State()
+    waiting_for_location = State()
