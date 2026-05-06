@@ -249,3 +249,31 @@ def get_all_drivers_list():
 def get_all_cars_list():
     drivers = get_drivers()
     return sorted(list(drivers.keys()))
+
+def find_order_row(order_id: str) -> int:
+    """Find the row index (1-based) for a given order_id."""
+    sheets = get_sheets_service()
+    if not sheets: return -1
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:Z').execute()
+        values = result.get('values', [])
+        if not values: return -1
+        
+        headers = values[0]
+        id_idx = fuzzy_match_header(headers, ['id', 'order_id', 'id_order'])
+        if id_idx == -1: return -1
+        
+        for i, row in enumerate(values[1:], start=2):
+            if len(row) > id_idx and str(row[id_idx]).strip() == str(order_id).strip():
+                return i
+        return -1
+    except Exception as e:
+        logger.error(f"Error finding order row: {e}")
+        return -1
+
+def update_order_status_by_id(order_id: str, status: str):
+    row_index = find_order_row(order_id)
+    if row_index != -1:
+        update_order_status(row_index, status)
+    else:
+        logger.error(f"Could not update status for {order_id}: Row not found.")
