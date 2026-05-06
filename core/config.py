@@ -8,8 +8,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").replace("/rest/v1", "").strip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 
 # Google Sheets Configuration
 GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID")
