@@ -76,7 +76,8 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str, is_fini
         )
         await asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)})
     except Exception as e:
-        logger.error(f"Group report error: {e}")
+        logger.error(f"Error in process_take_delivery: {e}")
+        return
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
