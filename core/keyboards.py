@@ -2,16 +2,13 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def get_main_menu_kb(is_admin: bool = False):
-    keyboard = [
-        [KeyboardButton(text="🚚 Mening vazifalarim")]
-    ]
-    if is_admin:
-        keyboard.append([KeyboardButton(text="🛠 Admin panel")])
+    keyboard = [[KeyboardButton(text="🚚 Mening vazifalarim")]]
+    if is_admin: keyboard.append([KeyboardButton(text="🛠 Admin panel")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_take_delivery_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Buyurtmani olish", callback_data=f"take_{order_id}")]
+        [InlineKeyboardButton(text="✅ Buyurtmani qabul qilish", callback_data=f"take_{order_id}")]
     ])
 
 def get_step_kb(text: str, callback_data: str):
@@ -19,9 +16,9 @@ def get_step_kb(text: str, callback_data: str):
         [InlineKeyboardButton(text=text, callback_data=callback_data)]
     ])
 
-def get_location_kb():
+def get_location_kb(text: str = "📍 Lokatsiyani yuborish"):
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📍 Lokatsiyani yuborish", request_location=True)]],
+        keyboard=[[KeyboardButton(text=text, request_location=True)]],
         resize_keyboard=True,
         one_time_keyboard=True
     )
