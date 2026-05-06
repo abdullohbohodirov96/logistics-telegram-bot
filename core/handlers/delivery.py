@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def should_send_to_group():
     return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
 
-async def update_group_report(bot: Bot, order_id: str, status_text: str, is_finish: bool = False):
+async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBORILDI", is_finish: bool = False):
     """
     Updates a single group message per order with full status history.
     """
@@ -46,7 +46,10 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str, is_fini
     text += f"➖➖➖➖➖➖➖➖➖➖\n"
     text += f"🏗 **Yuklash:** A:{zones['A']} B:{zones['B']} C:{zones['C']} D:{zones['D']}\n"
     text += f"📊 **Status:** {status_text}\n"
-    text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
+    if start_time_dt:
+        text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
+    else:
+        text += f"⏰ **Boshlandi:** ⏳ Kutilmoqda...\n"
     
     if is_finish:
         text += f"🏁 **Tugadi:** {format_time(now)}\n"

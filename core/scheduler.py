@@ -69,9 +69,14 @@ async def check_sheets_job(bot: Bot):
                     parse_mode="Markdown",
                     reply_markup=kb.get_take_delivery_kb(order['order_id'])
                 )
-                # 3. Update Sheets status to 'SENT' (dispatch success)
+                # 3. Update Sheets status to 'SENT'
                 await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
                 logger.info(f"Order {order['order_id']} sent to driver {driver_name} for car {car_number}")
+                
+                # 4. Immediate Group Report (NEW status)
+                from core.handlers.delivery import update_group_report
+                await update_group_report(bot, order['order_id'])
+                
             except Exception as e:
                 logger.error(f"Error processing order {order.get('order_id')}: {e}")
                 await asyncio.to_thread(update_order_status, order['row_index'], f"ERROR: {str(e)[:20]}")
