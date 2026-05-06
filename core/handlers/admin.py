@@ -7,11 +7,11 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from core.config import ADMIN_IDS, TIMEZONE
+from core.config import ADMIN_IDS, TIMEZONE, is_sheets_configured
 from core.db import get_history, get_active_orders
 from core.cache import cache_get, cache_set
 import core.keyboards as kb
-from core.sheets import get_drivers_status, get_all_drivers_list, get_all_cars_list
+from core.sheets import get_drivers_status_list, get_all_drivers_list, get_all_cars_list
 from core.states import AdminProcess
 from core.handlers.history import format_delivery_short
 
@@ -19,10 +19,42 @@ router = Router()
 logger = logging.getLogger(__name__)
 tz = pytz.timezone(TIMEZONE)
 
+@router.message(F.text == "/drivers")
 @router.message(F.text == "🛠 Admin panel")
 async def admin_panel(message: Message):
     if message.from_user.id not in ADMIN_IDS: return
+    
+    if message.text == "/drivers":
+        await show_cars_status_message(message)
+        return
+
     await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
+
+async def show_cars_status_message(message: Message):
+    if not is_sheets_configured():
+        await message.answer("❌ Google Sheets ulanmagan. Iltimos konfiguratsiyani tekshiring.")
+        return
+
+    t0 = time.time()
+    data = await asyncio.to_thread(get_drivers_status_list)
+    if not data:
+        await message.answer("⚠️ Haydovchilar ma'lumoti topilmadi.")
+        return
+        
+    text = "🚛 **Haydovchilar holati:**\n\n"
+    for d in data:
+        status_icon = "🟢" if d['status'] == "BO'SH" else "🔴"
+        text += f"{status_icon} **{d['car_number']}** — {d['driver_name']} — {d['status']}"
+        if d['order_id']: text += f" — #{d['order_id']}"
+        text += "\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+    logger.info(f"admin drivers status took {time.time()-t0:.2f}s")
+
+@router.callback_query(F.data == "adm_cars_status")
+async def show_cars_status_callback(callback: CallbackQuery):
+    await callback.answer()
+    await show_cars_status_message(callback.message)
 
 @router.callback_query(F.data == "adm_close")
 async def close_admin(callback: CallbackQuery):
@@ -165,22 +197,3 @@ async def show_active(callback: CallbackQuery):
     tp = (len(active) + 4) // 5
     if tp > 1: await callback.message.answer(f"Sahifa 1/{tp}", reply_markup=kb.get_pagination_kb(1, tp))
     logger.info(f"admin active list took {time.time()-t0:.2f}s")
-
-@router.callback_query(F.data == "adm_cars_status")
-async def show_cars_status(callback: CallbackQuery):
-    t0 = time.time()
-    await callback.answer()
-    data = await asyncio.to_thread(get_drivers_status)
-    if not data:
-        await callback.message.edit_text("Ma'lumot yo'q.", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
-        return
-    text = "🚗 **Mashinalar holati:**\n\n"
-    # Find car_number and status columns from DRIVERS sheet structure (helpers in sheets.py can be used)
-    # Since get_drivers_status returns raw rows, we assume A=driver_user_id, B=driver_name, C=car_number, D=status, E=order_id
-    for row in data:
-        if len(row) >= 4:
-            text += f"🔹 {row[2]} — {row[3]}"
-            if len(row) > 4 and row[4]: text += f" — #{row[4]}"
-            text += "\n"
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb.InlineKeyboardMarkup(inline_keyboard=[[kb.InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]]))
-    logger.info(f"admin cars status took {time.time()-t0:.2f}s")
