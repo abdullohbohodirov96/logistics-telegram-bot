@@ -2,164 +2,297 @@ import logging
 import asyncio
 from datetime import datetime
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.fsm.context import FSMContext
 
 from core.config import GROUP_CHAT_ID
-from core.db import get_order, update_order, save_order_step, get_order_steps, supabase
-from core.sheets import update_order_status_by_order_id, update_driver_status_sheet, get_driver_by_tid
+from core.db import get_order, update_order, supabase
+from core.sheets import update_order_status_by_order_id, update_driver_status_sheet
+from core.states import DeliveryStates
 import core.keyboards as kb
-from core.utils import get_now, format_time, format_duration, get_order_start_time
+from core.utils import get_now, format_duration
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-def should_send_to_group():
-    return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
+# Helper to calculate differences between steps
+def get_diff_text(start_at, end_at):
+    if not start_at or not end_at: return ""
+    try:
+        s = datetime.fromisoformat(start_at.replace('Z', '+00:00'))
+        e = datetime.fromisoformat(end_at.replace('Z', '+00:00'))
+        diff = int((e - s).total_seconds() / 60)
+        return f" (+{diff} daq)"
+    except: return ""
 
-async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBORILDI", is_finish: bool = False):
-    if not should_send_to_group(): return
+async def update_group_report(bot: Bot, order_id: str):
+    if not GROUP_CHAT_ID or str(GROUP_CHAT_ID) == "0": return
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
-    steps = await asyncio.to_thread(get_order_steps, order_id)
-    start_time_dt = get_order_start_time(order, steps)
-    now = get_now()
-    zones = {"A": "⚪️", "B": "⚪️", "C": "⚪️", "D": "⚪️"}
-    for s in steps:
-        if s['step_name'].startswith("z_"):
-            z = s['step_name'].split("_")[1].upper()
-            if z in zones: zones[z] = "✅" if s.get('step_value') == 'y' else "❌"
 
-    text = f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
-    text += f"📍 **Manzil:** {order.get('address', '-')}\n"
-    text += f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-    if order.get('comment'): text += f"📝 **Izoh:** {order['comment']}\n"
+    text = f"📦 **LOGISTIKA HISOBOTI #{order_id}**\n"
     text += f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
     text += f"➖➖➖➖➖➖➖➖➖➖\n"
-    text += f"🏗 **Yuklash:** A:{zones['A']} B:{zones['B']} C:{zones['C']} D:{zones['D']}\n"
-    text += f"📊 **Status:** {status_text}\n"
-    if start_time_dt: text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
-    else: text += f"⏰ **Boshlandi:** ⏳ Kutilmoqda...\n"
-    if is_finish:
-        text += f"🏁 **Tugadi:** {format_time(now)}\n"
-        if start_time_dt:
-            dur = int((now - start_time_dt).total_seconds() / 60)
-            text += f"⏳ **Ketgan vaqt:** {format_duration(dur)}\n"
-        text += f"\n🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}"
+    
+    steps = [
+        ("taken_at", "Olingan vaqt"),
+        ("a_block_at", "A blok"),
+        ("b_block_at", "B blok"),
+        ("c_block_at", "C blok"),
+        ("d_block_at", "D blok"),
+        ("transit_at", "Transit"),
+        ("loaded_photo_at", "Yuk rasmi"),
+        ("on_way_at", "Yo'lga chiqdi"),
+        ("arrived_at", "Yetib bordi"),
+        ("delivered_photo_at", "Yetkazilgan rasm"),
+        ("act_photo_at", "Akt rasmi"),
+        ("final_proof_at", "Final proof"),
+        ("finished_at", "Yakunlandi")
+    ]
+    
+    prev_at = None
+    for field, label in steps:
+        val = order.get(field)
+        if val:
+            dt = datetime.fromisoformat(val.replace('Z', '+00:00'))
+            diff = get_diff_text(prev_at, val) if prev_at else ""
+            text += f"✅ {label}: {dt.strftime('%H:%M')}{diff}\n"
+            prev_at = val
+
+    text += f"\n📊 **STATUS:** {order.get('current_status', 'NEW')}"
+    
+    if order.get('finished_at') and order.get('taken_at'):
+        s = datetime.fromisoformat(order['taken_at'].replace('Z', '+00:00'))
+        e = datetime.fromisoformat(order['finished_at'].replace('Z', '+00:00'))
+        total_min = int((e - s).total_seconds() / 60)
+        text += f"\n\n🏁 **Umumiy vaqt:** {format_duration(total_min)}"
 
     try:
         msg_id = order.get('group_message_id')
         if msg_id:
-            try:
-                await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="Markdown")
-                return
-            except Exception: pass
-        msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
-        asyncio.create_task(asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)}))
-    except Exception as e: logger.error(f"Error in update_group_report: {e}")
-
-@router.message(F.text == "🚚 Mening vazifalarim")
-async def show_my_tasks(message: Message, bot: Bot):
-    tid = message.from_user.id
-    try:
-        res = await asyncio.to_thread(lambda: supabase.table('orders').select('*').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute())
-        active_orders = res.data
-        if not active_orders:
-            await message.answer("Sizda hozircha faol vazifalar yo'q.")
-            return
-        await message.answer(f"Sizda {len(active_orders)} ta faol vazifa bor:")
-        for order in active_orders:
-            order_id = order['order_id']
-            status = order.get('current_status', 'NEW')
-            msg = f"📦 **Buyurtma #{order_id}**\n📍 Manzil: {order['address']}\n📦 Yuk: {order['cargo']}\n📊 Status: {status}"
-            kb_markup = None
-            if status in ['NEW', 'SENT', 'YUBORILGAN']: kb_markup = kb.get_take_delivery_kb(order_id)
-            elif status == 'OLDI' or status.startswith('z_') or status.startswith('zone_'):
-                steps = await asyncio.to_thread(get_order_steps, order_id)
-                kb_markup = kb.get_delivery_zones_kb(order_id, steps)
-            elif status in ['TRANZIT', 'YETKAZISH']: kb_markup = kb.get_finish_kb(order_id)
-            await message.answer(msg, reply_markup=kb_markup, parse_mode="Markdown")
+            await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="Markdown")
+        else:
+            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
+            await asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)})
     except Exception as e:
-        logger.error(f"Error showing tasks: {e}")
-        await message.answer("Xatolik yuz berdi.")
+        logger.error(f"Group report error: {e}")
 
 @router.callback_query(F.data.startswith("take_"))
-async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
-    order_id = callback.data.split("_")[1]
-    order = await asyncio.to_thread(get_order, order_id)
-    
-    if not order:
-        await callback.answer("❌ Buyurtma topilmadi", show_alert=True)
-        return
-
-    order_id = order.get("order_id")
-    if not order_id:
-        await callback.answer("❌ Buyurtma ID topilmadi", show_alert=True)
-        return
-
-    now = get_now()
-    # 1. Update Supabase (PATCH)
-    asyncio.create_task(asyncio.to_thread(update_order, order_id, {
-        'current_status': 'OLDI', 
-        'start_time': now.isoformat(),
-        'driver_telegram_id': callback.from_user.id
-    }))
-    
-    # 2. Update Sheets (by ID)
-    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'OLDI'))
-    
-    # 3. Update Driver Status
-    asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND', order_id))
-    
-    await callback.message.edit_text(
-        f"📦 **Buyurtma #{order_id}**\n\nYuklash bosqichlarini belgilang:",
-        reply_markup=kb.get_delivery_zones_kb(order_id, [])
-    )
-    await callback.answer("✅ Buyurtma olindi")
-    asyncio.create_task(update_group_report(bot, order_id, "OLDI"))
-
-@router.callback_query(F.data.startswith("zone_"))
-async def handle_zones(callback: CallbackQuery, bot: Bot):
-    parts = callback.data.split("_")
-    zone, order_id = parts[1], parts[2]
-    steps = await asyncio.to_thread(get_order_steps, order_id)
-    current_val = next((s['step_value'] for s in steps if s['step_name'] == f"z_{zone}"), 'n')
-    new_val = 'y' if current_val == 'n' else 'n'
-    asyncio.create_task(asyncio.to_thread(save_order_step, order_id, f"z_{zone}", new_val))
-    updated_steps = [s for s in steps if s['step_name'] != f"z_{zone}"]
-    updated_steps.append({'step_name': f"z_{zone}", 'step_value': new_val})
-    y_count = sum(1 for s in updated_steps if s['step_name'].startswith('z_') and s['step_value'] == 'y')
-    await callback.message.edit_reply_markup(
-        reply_markup=kb.get_delivery_zones_kb(order_id, updated_steps, show_transit=(y_count >= 1))
-    )
-    await callback.answer(f"{zone.upper()} yangilandi")
-    asyncio.create_task(update_group_report(bot, order_id, f"{zone.upper()} blok {'✅' if new_val=='y' else '⚪️'}"))
-
-@router.callback_query(F.data.startswith("transit_"))
-async def handle_transit(callback: CallbackQuery, bot: Bot):
-    order_id = callback.data.split("_")[1]
-    asyncio.create_task(asyncio.to_thread(update_order, order_id, {'current_status': 'TRANZIT'}))
-    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'TRANZIT'))
-    await callback.message.edit_text(
-        f"📦 **Buyurtma #{order_id}**\n\nHolat: **TRANZIT**\n\nManzilga yetib borgach tugatishni bosing.",
-        reply_markup=kb.get_finish_kb(order_id)
-    )
-    await callback.answer("Tranzitda")
-    asyncio.create_task(update_group_report(bot, order_id, "TRANZIT"))
-
-@router.callback_query(F.data.startswith("finish_"))
-async def handle_finish(callback: CallbackQuery, bot: Bot):
+async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
     order_id = callback.data.split("_")[1]
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
-    now = get_now()
-    asyncio.create_task(asyncio.to_thread(update_order, order_id, {'current_status': 'DONE', 'completed_at': now.isoformat()}))
+    
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {
+        'current_status': 'OLDI',
+        'taken_at': now,
+        'driver_telegram_id': callback.from_user.id,
+        'driver_name': callback.from_user.full_name
+    })
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'OLDI'))
+    
+    await state.update_data(order_id=order_id)
+    await state.set_state(DeliveryStates.A_BLOCK)
+    
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id} olingan.**\n\nSavol: **A blok mahsulot olindimi?**",
+        reply_markup=kb.get_step_kb("✅ A blok olindi", f"step_a_{order_id}")
+    )
+    await callback.answer("✅ Buyurtma olindi")
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_a_"))
+async def step_a(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'a_block_at': now})
+    await state.set_state(DeliveryStates.B_BLOCK)
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nSavol: **B blok mahsulot olindimi?**",
+        reply_markup=kb.get_step_kb("✅ B blok olindi", f"step_b_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_b_"))
+async def step_b(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'b_block_at': now})
+    await state.set_state(DeliveryStates.C_BLOCK)
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nSavol: **C blok mahsulot olindimi?**",
+        reply_markup=kb.get_step_kb("✅ C blok olindi", f"step_c_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_c_"))
+async def step_c(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'c_block_at': now})
+    await state.set_state(DeliveryStates.D_BLOCK)
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nSavol: **D blok mahsulot olindimi?**",
+        reply_markup=kb.get_step_kb("✅ D blok olindi", f"step_d_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_d_"))
+async def step_d(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'d_block_at': now})
+    await state.set_state(DeliveryStates.TRANSIT)
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nSavol: **🚚 Transit qilindimi?**",
+        reply_markup=kb.get_step_kb("✅ Transit qilindi", f"step_tr_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_tr_"))
+async def step_tr(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'transit_at': now, 'current_status': 'TRANSIT'})
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'TRANSIT'))
+    await state.set_state(DeliveryStates.LOADED_PHOTO)
+    await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+    await update_group_report(bot, order_id)
+
+@router.message(DeliveryStates.LOADED_PHOTO, F.photo)
+async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    file_id = message.photo[-1].file_id
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
+    await state.set_state(DeliveryStates.ON_WAY)
+    await message.answer(
+        f"✅ Rasm qabul qilindi.\n\n🚚 **Yo'lga chiqdingizmi?**",
+        reply_markup=kb.get_step_kb("✅ Yo'lga chiqdim", f"step_way_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("step_way_"))
+async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'on_way_at': now, 'current_status': 'ON_WAY'})
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'ON_WAY'))
+    await state.set_state(DeliveryStates.ARRIVED_LOC)
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\n📍 **Yetib borgan lokatsiyani yuboring**",
+        reply_markup=kb.get_location_kb()
+    )
+    await update_group_report(bot, order_id)
+
+@router.message(DeliveryStates.ARRIVED_LOC, F.location)
+async def handle_location(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    lat, lng = message.location.latitude, message.location.longitude
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {
+        'arrived_location_lat': lat,
+        'arrived_location_lng': lng,
+        'arrived_at': now,
+        'current_status': 'ARRIVED'
+    })
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'ARRIVED'))
+    await state.set_state(DeliveryStates.DELIVERED_PHOTO)
+    await message.answer(
+        f"✅ Lokatsiya qabul qilindi.\n\n📸 **Yetkazib berilgan mahsulot rasmini yuboring**",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await update_group_report(bot, order_id)
+
+@router.message(DeliveryStates.DELIVERED_PHOTO, F.photo)
+async def handle_delivered_photo(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    file_id = message.photo[-1].file_id
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'delivered_photo_file_id': file_id, 'delivered_photo_at': now})
+    await state.set_state(DeliveryStates.ACT_PHOTO)
+    await message.answer(f"✅ Rasm qabul qilindi.\n\n📄 **Akt rasmini yuboring**")
+    await update_group_report(bot, order_id)
+
+@router.message(DeliveryStates.ACT_PHOTO, F.photo)
+async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    file_id = message.photo[-1].file_id
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
+    await state.set_state(DeliveryStates.FINAL_PROOF)
+    await message.answer(f"✅ Akt qabul qilindi.\n\n🚛 **Moshina rasmi yoki qo'l qo'ydirilgan hujjat rasmini yuboring**")
+    await update_group_report(bot, order_id)
+
+@router.message(DeliveryStates.FINAL_PROOF, F.photo)
+async def handle_final_photo(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    file_id = message.photo[-1].file_id
+    now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'final_proof_photo_file_id': file_id, 'final_proof_at': now})
+    await state.set_state(DeliveryStates.WAITING_FINISH)
+    await message.answer(
+        f"✅ Barcha hujjatlar qabul qilindi.\n\n🏁 **Buyurtmani yakunlashni bosing**",
+        reply_markup=kb.get_step_kb("✅ Buyurtmani yakunlash", f"final_done_{order_id}")
+    )
+    await update_group_report(bot, order_id)
+
+@router.callback_query(F.data.startswith("final_done_"))
+async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    order = await asyncio.to_thread(get_order, order_id)
+    now = get_now().isoformat()
+    
+    await asyncio.to_thread(update_order, order_id, {
+        'finished_at': now,
+        'current_status': 'DONE'
+    })
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'DONE'))
-    async def release_driver():
-        tid = callback.from_user.id
-        res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute())
-        if not res.data:
-            await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BO\'SH', "")
-    asyncio.create_task(release_driver())
-    await callback.message.edit_text(f"✅ **Buyurtma #{order_id} yakunlandi!**")
-    await callback.answer("Tugallandi!")
-    asyncio.create_task(update_group_report(bot, order_id, "DONE", is_finish=True))
+    
+    # Release driver
+    tid = callback.from_user.id
+    res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute())
+    if not res.data:
+        await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BO\'SH', "")
+
+    await state.clear()
+    
+    # Calculate final stats
+    s_dt = datetime.fromisoformat(order['taken_at'].replace('Z', '+00:00'))
+    e_dt = datetime.fromisoformat(now.replace('Z', '+00:00'))
+    total_min = int((e_dt - s_dt).total_seconds() / 60)
+    
+    await callback.message.edit_text(
+        f"✅ **Buyurtma yakunlandi**\n\n"
+        f"🆔 Buyurtma ID: {order_id}\n"
+        f"⏰ Olingan vaqt: {s_dt.strftime('%H:%M')}\n"
+        f"🏁 Yakunlangan vaqt: {e_dt.strftime('%H:%M')}\n"
+        f"⏳ Umumiy vaqt: {format_duration(total_min)}"
+    )
+    await callback.answer("✅ Muvaffaqiyatli yakunlandi")
+    await update_group_report(bot, order_id)
+
+# Fallback for wrong input
+@router.message(DeliveryStates())
+async def handle_wrong_input(message: Message, state: FSMContext):
+    curr = await state.get_state()
+    if curr == DeliveryStates.LOADED_PHOTO or curr == DeliveryStates.DELIVERED_PHOTO or \
+       curr == DeliveryStates.ACT_PHOTO or curr == DeliveryStates.FINAL_PROOF:
+        await message.answer("❌ Iltimos, rasm yuboring.")
+    elif curr == DeliveryStates.ARRIVED_LOC:
+        await message.answer("❌ Iltimos, lokatsiyani yuboring.", reply_markup=kb.get_location_kb())
+    else:
+        await message.answer("❌ Iltimos, yuqoridagi tugmalardan foydalaning.")

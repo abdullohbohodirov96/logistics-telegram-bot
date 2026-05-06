@@ -1,10 +1,16 @@
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.state import State, StatesGroup
 
-class DeliveryProcess(StatesGroup):
-    waiting_for_transit = State()
-    waiting_for_load_photo = State()
-    waiting_for_location = State()
-    waiting_for_unload_photo = State()
-
-class AdminProcess(StatesGroup):
-    waiting_for_manual_date = State()
+class DeliveryStates(StatesGroup):
+    WAITING_TAKE = State()
+    A_BLOCK = State()
+    B_BLOCK = State()
+    C_BLOCK = State()
+    D_BLOCK = State()
+    TRANSIT = State()
+    LOADED_PHOTO = State()
+    ON_WAY = State()
+    ARRIVED_LOC = State()
+    DELIVERED_PHOTO = State()
+    ACT_PHOTO = State()
+    FINAL_PROOF = State()
+    WAITING_FINISH = State()
