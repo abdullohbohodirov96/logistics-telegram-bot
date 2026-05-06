@@ -13,11 +13,11 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Google Sheets Configuration
 GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID")
-DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers")
-ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders")
+DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers").strip()
+ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders").strip()
 
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
-POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
 
 ADMIN_IDS = []
 admin_ids_str = os.getenv("ADMIN_IDS", "")
