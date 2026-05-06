@@ -33,7 +33,16 @@ def format_time(dt):
     if isinstance(dt, str): return dt
     return dt.strftime("%H:%M")
 
+def format_duration_detailed(seconds: int):
+    if seconds is None or seconds < 0: return "—"
+    m = seconds // 60
+    s = seconds % 60
+    if m > 0:
+        return f"{m} daqiqa {s} soniya"
+    return f"{s} soniya"
+
 def format_duration(minutes: int):
+    """Old simplified version for backward compatibility if needed."""
     if minutes is None: return ""
     h = minutes // 60
     m = minutes % 60

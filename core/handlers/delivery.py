@@ -2,7 +2,7 @@ import logging
 import asyncio
 from datetime import datetime
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
 from core.config import GROUP_CHAT_ID
@@ -10,7 +10,7 @@ from core.db import get_order, update_order, supabase
 from core.sheets import update_order_status_by_order_id, update_driver_status_sheet
 from core.states import DeliveryStates
 import core.keyboards as kb
-from core.utils import get_now, format_duration, parse_dt
+from core.utils import get_now, format_duration_detailed, parse_dt
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -21,45 +21,44 @@ def get_status_icon(status):
     if status in ["ORTMADI", "OLMADI"]: return "❌"
     return "⚪️"
 
-def build_group_report_text(order):
+def get_seconds_diff(start_iso, end_iso):
+    if not start_iso or not end_iso: return None
+    try:
+        s = datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+        e = datetime.fromisoformat(end_iso.replace('Z', '+00:00'))
+        return int((e - s).total_seconds())
+    except: return None
+
+def build_interim_report(order):
     order_id = order.get('order_id', '-')
     a_icon = get_status_icon(order.get('a_block_status'))
     b_icon = get_status_icon(order.get('b_block_status'))
     c_icon = get_status_icon(order.get('c_block_status'))
     d_icon = get_status_icon(order.get('d_block_status'))
     tr_icon = get_status_icon(order.get('transit_status'))
+    
     acc_at = parse_dt(order.get('accepted_at'))
-    fin_at = parse_dt(order.get('finished_at'))
     acc_time = acc_at.strftime('%H:%M') if acc_at else "—"
-    fin_time = fin_at.strftime('%H:%M') if fin_at else "—"
-    duration = "—"
-    if acc_at:
-        end = fin_at or get_now()
-        total_min = int((end - acc_at).total_seconds() / 60)
-        duration = format_duration(total_min)
+    
     text = (
         f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
         f"📍 **Manzil:** {order.get('address', '-')}\n"
         f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-        f"📝 **Izoh:** {order.get('comment', '-')}\n"
         f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🏗 **Yuklash:**\n"
         f"A: {a_icon}  B: {b_icon}  C: {c_icon}  D: {d_icon}  Transit: {tr_icon}\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
         f"⏰ **Boshlandi:** {acc_time}\n"
-        f"🏁 **Tugadi:** {fin_time}\n"
-        f"⏳ **Ketgan vaqt:** {duration}\n"
     )
-    if order.get('current_status') == 'YAKUNLANDI':
-        text += f"\n🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}"
     return text
 
 async def update_group_report(bot: Bot, order_id: str):
     if not GROUP_CHAT_ID or str(GROUP_CHAT_ID) == "0": return
     order = await asyncio.to_thread(get_order, order_id)
-    if not order: return
-    text = build_group_report_text(order)
+    if not order or order.get('current_status') == 'YAKUNLANDI': return
+    
+    text = build_interim_report(order)
     try:
         msg_id = order.get('group_message_id')
         if msg_id:
@@ -108,9 +107,6 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
-    if GROUP_CHAT_ID:
-        try: await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=file_id, caption=f"📸 Yuk ortilgan rasm #{order_id}")
-        except: pass
     await state.set_state(DeliveryStates.ON_WAY); order = await asyncio.to_thread(get_order, order_id)
     await message.answer(f"✅ Rasm qabul qilindi.\n\n📍 **Manzil:** {order.get('address', '-')}\n\n**Yo'lga chiqdingizmi?**", reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}"))
     asyncio.create_task(update_group_report(bot, order_id))
@@ -130,9 +126,6 @@ async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
-    if GROUP_CHAT_ID:
-        try: await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=file_id, caption=f"📄 Qo'l qo'ydirilgan akt rasmi #{order_id}")
-        except: pass
     await state.set_state(DeliveryStates.DELIVERED_LOC)
     await message.answer(f"✅ Akt qabul qilindi.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
     asyncio.create_task(update_group_report(bot, order_id))
@@ -147,15 +140,101 @@ async def handle_delivered_location(message: Message, state: FSMContext, bot: Bo
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat(); order = await asyncio.to_thread(get_order, order_id)
+    order_id = (await state.get_data()).get('order_id'); now = get_now().isoformat()
+    order = await asyncio.to_thread(get_order, order_id)
+    if not order: return
+    
+    # Update DB
     await asyncio.to_thread(update_order, order_id, {'finished_at': now, 'current_status': 'YAKUNLANDI'})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI'))
+    
+    # 1. Driver Report
+    acc_at = order.get('accepted_at')
+    fin_at = now
+    
+    # Durations
+    d_total = format_duration_detailed(get_seconds_diff(acc_at, fin_at))
+    d_a = format_duration_detailed(get_seconds_diff(acc_at, order.get('a_block_at')))
+    d_b = format_duration_detailed(get_seconds_diff(order.get('a_block_at'), order.get('b_block_at')))
+    d_c = format_duration_detailed(get_seconds_diff(order.get('b_block_at'), order.get('c_block_at')))
+    d_d = format_duration_detailed(get_seconds_diff(order.get('c_block_at'), order.get('d_block_at')))
+    d_tr = format_duration_detailed(get_seconds_diff(order.get('d_block_at'), order.get('transit_at')))
+    d_yuk = format_duration_detailed(get_seconds_diff(order.get('transit_at'), order.get('loaded_photo_at')))
+    d_way = format_duration_detailed(get_seconds_diff(order.get('loaded_photo_at'), order.get('on_way_at')))
+    d_act = format_duration_detailed(get_seconds_diff(order.get('on_way_at'), order.get('act_photo_at')))
+    d_loc = format_duration_detailed(get_seconds_diff(order.get('act_photo_at'), order.get('delivered_location_at')))
+
+    drv_msg = (
+        f"✅ **Buyurtma yakunlandi**\n\n"
+        f"🆔 Buyurtma: #{order_id}\n"
+        f"⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M')}\n"
+        f"🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n"
+        f"⏳ Umumiy vaqt: {d_total}\n\n"
+        f"**Etaplar:**\n"
+        f"A-blok: {order.get('a_block_status','—')} | {d_a}\n"
+        f"B-blok: {order.get('b_block_status','—')} | {d_b}\n"
+        f"C-blok: {order.get('c_block_status','—')} | {d_c}\n"
+        f"D-blok: {order.get('d_block_status','—')} | {d_d}\n"
+        f"Transit: {order.get('transit_status','—')} | {d_tr}\n"
+        f"Yuk rasmi: {d_yuk}\n"
+        f"Yo'lga chiqish: {d_way}\n"
+        f"Akt rasmi: {d_act}\n"
+        f"Lokatsiya: {d_loc}\n"
+    )
+    await callback.message.edit_text(drv_msg, parse_mode="Markdown")
+    
+    # 2. Cleanup Group Message
+    if GROUP_CHAT_ID:
+        try:
+            msg_id = order.get('group_message_id')
+            if msg_id: await bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=int(msg_id))
+        except Exception as e: logger.warning(f"Failed to delete group msg: {e}")
+        
+        # 3. Send Final Group Report
+        a_i = get_status_icon(order.get('a_block_status'))
+        b_i = get_status_icon(order.get('b_block_status'))
+        c_i = get_status_icon(order.get('c_block_status'))
+        d_i = get_status_icon(order.get('d_block_status'))
+        t_i = get_status_icon(order.get('transit_status'))
+        
+        maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
+        
+        grp_text = (
+            f"🚚 **LOGISTIKA YAKUNI #{order_id}**\n\n"
+            f"📍 **Manzil:** {order.get('address', '-')}\n"
+            f"📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n"
+            f"📦 **Yuk:** {order.get('cargo', '-')}\n"
+            f"📝 **Izoh:** {order.get('comment', '-')}\n\n"
+            f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n"
+            f"🚘 **Mashina:** {order.get('car_number', '-')}\n\n"
+            f"🏗 **Yuklash:**\n"
+            f"A: {a_i}  B: {b_i}  C: {c_i}  D: {d_i}  Transit: {t_i}\n\n"
+            f"⏰ **Boshlandi:** {parse_dt(acc_at).strftime('%H:%M')}\n"
+            f"🏁 **Tugadi:** {parse_dt(fin_at).strftime('%H:%M')}\n"
+            f"⏳ **Ketgan vaqt:** {d_total}\n\n"
+            f"📊 **Status:** YAKUNLANDI\n"
+            f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}"
+        )
+        await bot.send_message(chat_id=GROUP_CHAT_ID, text=grp_text, parse_mode="Markdown", disable_web_page_preview=False)
+        
+        # 4. Send Media Group
+        media = []
+        if order.get('loaded_photo_file_id'):
+            media.append(InputMediaPhoto(media=order['loaded_photo_file_id'], caption=f"📸 Buyurtma rasmlari #{order_id}\n1) Yuk ortilgan rasm\n2) Qo'l qo'ydirilgan akt rasmi"))
+        if order.get('act_photo_file_id'):
+            media.append(InputMediaPhoto(media=order['act_photo_file_id']))
+            
+        if media:
+            try: await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
+            except Exception as e: logger.error(f"Media group error: {e}")
+
+    # 5. Release Driver
     async def release_driver():
         tid = callback.from_user.id; res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute())
         if not res.data: await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BO\'SH', "")
     asyncio.create_task(release_driver())
-    await callback.message.edit_text(f"✅ **Buyurtma yakunlandi!**\n\nID: {order_id}\n\n🟢 Mashina bo'shadi: {order.get('car_number', '-')}")
-    await state.clear(); await callback.answer("✅ Yakunlandi"); asyncio.create_task(update_group_report(bot, order_id))
+    
+    await state.clear(); await callback.answer("✅ Yakunlandi")
 
 @router.message(DeliveryStates())
 async def handle_wrong_input(message: Message, state: FSMContext):
