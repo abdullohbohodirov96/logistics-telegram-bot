@@ -69,12 +69,12 @@ async def check_sheets_job(bot: Bot):
                     parse_mode="Markdown",
                     reply_markup=kb.get_take_delivery_kb(order['order_id'])
                 )
-                # Update Sheets - ONLY STATUS COLUMN
-                await asyncio.to_thread(update_order_status, order['row_index'], 'SEND')
-                logger.info(f"Order {order['order_id']} sent to driver {driver_name}.")
+                # 3. Update Sheets status to 'SENT' (dispatch success)
+                await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
+                logger.info(f"Order {order['order_id']} sent to driver {driver_name} for car {car_number}")
             except Exception as e:
-                logger.error(f"Failed to send to driver {driver_name} ({telegram_id}): {e}")
-                await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_BOT_BLOCKED')
+                logger.error(f"Error processing order {order.get('order_id')}: {e}")
+                await asyncio.to_thread(update_order_status, order['row_index'], f"ERROR: {str(e)[:20]}")
                 
     except Exception as e:
         logger.error(f"Error in check_sheets_job: {e}")

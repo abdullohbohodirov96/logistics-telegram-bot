@@ -107,19 +107,25 @@ def get_new_orders():
         new_orders = []
         for i, row in enumerate(values[1:]):
             if not any(row): continue
-            status = row[idx_status].strip().upper() if idx_status != -1 and len(row) > idx_status else ""
-            if status in ['', 'NEW', 'YANGI']:
-                order_id = row[idx_id].strip() if idx_id != -1 and len(row) > idx_id else str(i+1)
-                car_num = normalize_car(row[idx_car]) if idx_car != -1 and len(row) > idx_car else ""
-                if order_id and car_num:
-                    new_orders.append({
-                        'row_index': i + 2,
-                        'order_id': order_id,
-                        'car_number': car_num,
-                        'address': row[idx_addr].strip() if idx_addr != -1 and len(row) > idx_addr else "",
-                        'cargo': row[idx_cargo].strip() if idx_cargo != -1 and len(row) > idx_cargo else "",
-                        'comment': row[idx_comment].strip() if idx_comment != -1 and len(row) > idx_comment else ""
-                    })
+            
+            raw_status = row[idx_status].strip().upper() if idx_status != -1 and len(row) > idx_status else ""
+            # Normalize status: replace curly quotes with straight ones
+            status = raw_status.replace('‘', "'").replace('’', "'")
+            
+            # Get order_id and car_number
+            order_id = row[idx_id].strip() if idx_id != -1 and len(row) > idx_id else ""
+            car_num = normalize_car(row[idx_car]) if idx_car != -1 and len(row) > idx_car else ""
+            
+            # Process if status is empty, NEW, YANGI, or SEND
+            if status in ['', 'NEW', 'YANGI', 'SEND'] and order_id and car_num:
+                new_orders.append({
+                    'row_index': i + 2,
+                    'order_id': order_id,
+                    'car_number': car_num,
+                    'address': row[idx_addr].strip() if idx_addr != -1 and len(row) > idx_addr else "",
+                    'cargo': row[idx_cargo].strip() if idx_cargo != -1 and len(row) > idx_cargo else "",
+                    'comment': row[idx_comment].strip() if idx_comment != -1 and len(row) > idx_comment else ""
+                })
         return new_orders
     except Exception as e:
         logger.error(f"Error in get_new_orders: {e}")
