@@ -128,7 +128,6 @@ def update_order_status(row_index: int, status: str):
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        # Find 'status' column index
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
         headers = [h.strip().lower() for h in result.get('values', [[]])[0]]
         if 'status' not in headers:
@@ -266,5 +265,9 @@ def get_drivers():
             tid = clean_tid(row[idx_tid])
             if norm_car and tid:
                 drivers[norm_car] = {'driver_name': row[idx_name].strip(), 'telegram_id': tid}
+        
+        logger.info(f"Drivers listidan topilgan moshinalar: {list(drivers.keys())}")
         return drivers
-    except: return {}
+    except Exception as e:
+        logger.error(f"Error in get_drivers: {e}")
+        return {}
