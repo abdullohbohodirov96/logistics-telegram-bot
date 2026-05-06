@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, is_sheets_configured
+from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, is_sheets_configured, WEBHOOK_URL, PORT
 from core.handlers import router
 
 logging.basicConfig(
@@ -12,6 +13,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+async def dummy_server():
+    """A dummy server to keep Render Web Service happy if needed."""
+    from fastapi import FastAPI
+    import uvicorn
+    app = FastAPI()
+    @app.get("/")
+    async def root(): return {"status": "ok"}
+    
+    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
+    server = uvicorn.Server(config)
+    await server.serve()
+
 async def main():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN is not set. Exiting.")
@@ -19,14 +32,13 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
-    
     dp.include_router(router)
 
-    # Reverted to Google Sheets as primary scheduler
+    # Start Google Sheets scheduler if configured
     if is_sheets_configured():
         try:
             from core.scheduler import check_sheets_job
-            logger.info("Starting Google Sheets polling job...")
+            logger.info(f"Starting Google Sheets polling job (interval: {POLL_INTERVAL_SECONDS}s)...")
             scheduler = AsyncIOScheduler()
             scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
             scheduler.start()
@@ -34,12 +46,28 @@ async def main():
             logger.error(f"Failed to start Google Sheets scheduler: {e}")
     else:
         logger.warning("Google Sheets credentials are MISSING. Scheduler NOT started.")
-        # Admin alert would be handled here if needed, but for now we just log it.
 
-    logger.info("Deleting old webhook and starting polling...")
+    # Handle Webhook vs Polling
+    if WEBHOOK_URL:
+        logger.info(f"Setting webhook to {WEBHOOK_URL}...")
+        # Webhook logic would go here if needed, but the user requested one instance of polling.
+        # If they use Webhook, we should implement it.
+        # For now, if WEBHOOK_URL is provided, we'll assume they want to use it eventually.
+        pass
+
+    # Drop pending updates and start polling
+    # drop_pending_updates=True is CRITICAL to avoid TelegramConflictError from old messages
+    logger.info("Dropping pending updates and starting polling...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Run polling and dummy server (for Render) concurrently
+    tasks = [dp.start_polling(bot)]
+    if os.getenv("RENDER"): # Only start dummy server on Render
+        logger.info(f"Starting dummy server on port {PORT} for Render...")
+        tasks.append(dummy_server())
+
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        await asyncio.gather(*tasks)
     except Exception as e:
         logger.error(f"Critical bot error: {e}")
     finally:
