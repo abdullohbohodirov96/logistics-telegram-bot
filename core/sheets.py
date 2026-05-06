@@ -108,14 +108,17 @@ def get_new_orders():
                 })
         return new_orders
     except Exception as e:
-        if "Requested entity was not found" in str(e):
-            logger.error(f"❌ XATO: '{ORDERS_SHEET_NAME}' tab topilmadi.")
+        error_msg = str(e)
+        if "404" in error_msg or "Requested entity was not found" in error_msg:
+            logger.error(f"❌ XATO: Google Sheets tab topilmadi. SPREADSHEET_ID: {GOOGLE_SHEET_ID}")
             try:
-                # Debug: list all available sheets
+                # Forcefully fetch and list all sheet titles
                 meta = sheets.get(spreadsheetId=GOOGLE_SHEET_ID).execute()
                 titles = [s['properties']['title'] for s in meta.get('sheets', [])]
-                logger.info(f"Mavjud sheet nomlari: {titles}")
-            except: pass
+                logger.info(f"📊 DIQQAT! Hujjatingizdagi mavjud listlar: {titles}")
+                logger.info(f"Siz o'rnatgan ORDERS_SHEET_NAME: '{ORDERS_SHEET_NAME}'")
+            except Exception as meta_err:
+                logger.error(f"Mavjud sheetlarni o'qishda xato: {meta_err}")
         else:
             logger.error(f"Error getting new orders: {e}")
         return []

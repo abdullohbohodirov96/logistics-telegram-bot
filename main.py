@@ -55,10 +55,9 @@ async def main():
         # For now, if WEBHOOK_URL is provided, we'll assume they want to use it eventually.
         pass
 
-    # Drop pending updates and start polling
-    # drop_pending_updates=True is CRITICAL to avoid TelegramConflictError from old messages
     logger.info("Dropping pending updates and starting polling...")
     await bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.sleep(2) # Small cooldown to allow other instances to settle
     
     # Run polling and dummy server (for Render) concurrently
     tasks = [dp.start_polling(bot)]
