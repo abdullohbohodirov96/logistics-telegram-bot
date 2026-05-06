@@ -93,15 +93,23 @@ def get_new_orders():
         
         new_orders = []
         for i, row in enumerate(values[1:]):
+            # Skip completely empty rows
+            if not any(row): continue
+            
             status = ""
             if len(row) > idx_status:
                 status = row[idx_status].strip().upper()
             
-            if status in ['', 'NEW', 'YANGI']:
+            # Get order_id and car_number
+            order_id = row[idx_id].strip() if len(row) > idx_id else ""
+            car_number = normalize_car(row[idx_car]) if len(row) > idx_car else ""
+            
+            # Only process if status is NEW and we have both order_id and car_number
+            if status in ['', 'NEW', 'YANGI'] and order_id and car_number:
                 new_orders.append({
                     'row_index': i + 2,
-                    'order_id': row[idx_id].strip() if len(row) > idx_id else str(i+1),
-                    'car_number': normalize_car(row[idx_car]) if len(row) > idx_car else '',
+                    'order_id': order_id,
+                    'car_number': car_number,
                     'address': row[idx_addr].strip() if len(row) > idx_addr else '',
                     'cargo': row[idx_cargo].strip() if len(row) > idx_cargo else '',
                     'comment': row[idx_comment].strip() if len(row) > idx_comment else ''
