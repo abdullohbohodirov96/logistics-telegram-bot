@@ -1,13 +1,11 @@
 import logging
 import asyncio
 from datetime import datetime
-import pytz
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
 
-from core.config import GROUP_CHAT_ID, TIMEZONE
-from core.db import get_order, update_order, save_order_step, get_order_steps
+from core.config import GROUP_CHAT_ID
+from core.db import get_order, update_order, save_order_step, get_order_steps, supabase
 from core.sheets import update_order_status, update_driver_status_sheet, get_driver_by_tid
 import core.keyboards as kb
 from core.utils import get_now, format_time, format_duration, get_order_start_time
@@ -19,25 +17,17 @@ def should_send_to_group():
     return bool(GROUP_CHAT_ID and str(GROUP_CHAT_ID) != "0")
 
 async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBORILDI", is_finish: bool = False):
-    """
-    Updates a single group message per order with full status history.
-    """
     if not should_send_to_group(): return
-    
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
-    
     steps = await asyncio.to_thread(get_order_steps, order_id)
     start_time_dt = get_order_start_time(order, steps)
     now = get_now()
-    
-    # Zone status summary
     zones = {"A": "⚪️", "B": "⚪️", "C": "⚪️", "D": "⚪️"}
     for s in steps:
         if s['step_name'].startswith("z_"):
             z = s['step_name'].split("_")[1].upper()
-            if z in zones:
-                zones[z] = "✅" if s.get('step_value') == 'y' else "❌"
+            if z in zones: zones[z] = "✅" if s.get('step_value') == 'y' else "❌"
 
     text = f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
     text += f"📍 **Manzil:** {order.get('address', '-')}\n"
@@ -47,12 +37,8 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBOR
     text += f"➖➖➖➖➖➖➖➖➖➖\n"
     text += f"🏗 **Yuklash:** A:{zones['A']} B:{zones['B']} C:{zones['C']} D:{zones['D']}\n"
     text += f"📊 **Status:** {status_text}\n"
-    
-    if start_time_dt:
-        text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
-    else:
-        text += f"⏰ **Boshlandi:** ⏳ Kutilmoqda...\n"
-    
+    if start_time_dt: text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
+    else: text += f"⏰ **Boshlandi:** ⏳ Kutilmoqda...\n"
     if is_finish:
         text += f"🏁 **Tugadi:** {format_time(now)}\n"
         if start_time_dt:
@@ -64,20 +50,49 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBOR
         msg_id = order.get('group_message_id')
         if msg_id:
             try:
-                await bot.edit_message_text(
-                    chat_id=GROUP_CHAT_ID,
-                    message_id=int(msg_id),
-                    text=text,
-                    parse_mode="Markdown"
-                )
+                await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="Markdown")
                 return
-            except Exception:
-                pass
-        
+            except Exception: pass
         msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
         await asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)})
+    except Exception as e: logger.error(f"Error in update_group_report: {e}")
+
+@router.message(F.text == "🚚 Mening vazifalarim")
+async def show_my_tasks(message: Message, bot: Bot):
+    tid = message.from_user.id
+    # Get active orders from Supabase
+    try:
+        res = supabase.table('orders').select('*').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute()
+        active_orders = res.data
+        if not active_orders:
+            await message.answer("Sizda hozircha faol vazifalar yo'q.")
+            return
+        
+        await message.answer(f"Sizda {len(active_orders)} ta faol vazifa bor:")
+        for order in active_orders:
+            order_id = order['order_id']
+            status = order.get('current_status', 'NEW')
+            msg = (
+                f"📦 **Buyurtma #{order_id}**\n"
+                f"📍 Manzil: {order['address']}\n"
+                f"📦 Yuk: {order['cargo']}\n"
+                f"📊 Status: {status}"
+            )
+            # Show relevant buttons based on status
+            if status in ['NEW', 'SENT', 'YUBORILGAN']:
+                kb_markup = kb.get_take_delivery_kb(order_id)
+            elif status == 'OLDI' or status.startswith('z_'):
+                steps = await asyncio.to_thread(get_order_steps, order_id)
+                kb_markup = kb.get_delivery_zones_kb(order_id, steps)
+            elif status == 'TRANZIT' or status == 'YETKAZISH':
+                kb_markup = kb.get_finish_kb(order_id)
+            else:
+                kb_markup = None
+                
+            await message.answer(msg, reply_markup=kb_markup, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Error in update_group_report: {e}")
+        logger.error(f"Error showing tasks: {e}")
+        await message.answer("Vazifalarni yuklashda xatolik yuz berdi.")
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
@@ -86,88 +101,75 @@ async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
     if not order:
         await callback.answer("Buyurtma topilmadi", show_alert=True)
         return
-
     now = get_now()
-    await asyncio.to_thread(update_order, order_id, {
-        'current_status': 'OLDI',
-        'start_time': now.isoformat()
-    })
-    
-    # Update Sheets
+    await asyncio.to_thread(update_order, order_id, {'current_status': 'OLDI', 'start_time': now.isoformat()})
     await asyncio.to_thread(update_order_status, order['row_index'], 'OLDI')
     await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BAND', order_id)
-
+    
+    steps = await asyncio.to_thread(get_order_steps, order_id)
     await callback.message.edit_text(
         f"📦 **Buyurtma #{order_id}**\n\nYuklash bosqichlarini belgilang:",
-        reply_markup=kb.get_zone_kb("A", order_id)
+        reply_markup=kb.get_delivery_zones_kb(order_id, steps)
     )
     await callback.answer("Buyurtma qabul qilindi!")
-    await update_group_report(bot, order_id, "YUKLANDI (OLDI)")
+    await update_group_report(bot, order_id, "OLDI")
 
-@router.callback_query(F.data.startswith("z_"))
+@router.callback_query(F.data.startswith("zone_"))
 async def handle_zones(callback: CallbackQuery, bot: Bot):
-    # z_{zone}_{val}_{order_id}
     parts = callback.data.split("_")
-    zone = parts[1].upper()
-    val = parts[2]
-    order_id = parts[3]
-    
-    await asyncio.to_thread(save_order_step, order_id, f"z_{zone.lower()}", val)
-    
-    next_zones = {"A": "B", "B": "C", "C": "D"}
-    if zone in next_zones:
-        next_z = next_zones[zone]
-        await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\nKeyingi bosqich: **{next_z}-blok**",
-            reply_markup=kb.get_zone_kb(next_z, order_id)
-        )
-    else:
-        # After D, ask for transit
-        await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\nHamma bloklar yakunlandi. Transit bormi?",
-            reply_markup=kb.get_transit_kb(order_id)
-        )
-    
-    await callback.answer(f"{zone}-blok belgilandi")
-    await update_group_report(bot, order_id, f"{zone}-blok {('✅' if val=='y' else '❌')}")
-
-@router.callback_query(F.data.startswith("tr_"))
-async def handle_transit(callback: CallbackQuery, bot: Bot):
-    # tr_{val}_{order_id}
-    parts = callback.data.split("_")
-    val = parts[1]
+    zone = parts[1]
     order_id = parts[2]
     
-    status = "TRANZIT" if val == "y" else "YETKAZISH"
+    # Toggle zone status
+    steps = await asyncio.to_thread(get_order_steps, order_id)
+    current_val = 'n'
+    for s in steps:
+        if s['step_name'] == f"z_{zone}":
+            current_val = s['step_value']
+            break
+    
+    new_val = 'y' if current_val == 'n' else 'n'
+    await asyncio.to_thread(save_order_step, order_id, f"z_{zone}", new_val)
+    
+    # Check if all zones are 'y' to show transit button
+    updated_steps = await asyncio.to_thread(get_order_steps, order_id)
+    y_count = sum(1 for s in updated_steps if s['step_name'].startswith('z_') and s['step_value'] == 'y')
+    show_transit = (y_count >= 1) # Show transit if at least one zone is marked (or use >=4 for all)
+    
+    await callback.message.edit_reply_markup(
+        reply_markup=kb.get_delivery_zones_kb(order_id, updated_steps, show_transit=show_transit)
+    )
+    await callback.answer(f"{zone.upper()}-blok yangilandi")
+    await update_group_report(bot, order_id, f"{zone.upper()}-blok {'✅' if new_val=='y' else '⚪️'}")
+
+@router.callback_query(F.data.startswith("transit_"))
+async def handle_transit(callback: CallbackQuery, bot: Bot):
+    order_id = callback.data.split("_")[1]
     order = await asyncio.to_thread(get_order, order_id)
-    
-    await asyncio.to_thread(update_order, order_id, {'current_status': status})
-    if order:
-        await asyncio.to_thread(update_order_status, order['row_index'], status)
-    
+    await asyncio.to_thread(update_order, order_id, {'current_status': 'TRANZIT'})
+    if order: await asyncio.to_thread(update_order_status, order['row_index'], 'TRANZIT')
     await callback.message.edit_text(
-        f"📦 **Buyurtma #{order_id}**\n\nHolat: **{status}**\n\nManzilga yetib borib, tushirib bo'lgach tugatishni bosing.",
+        f"📦 **Buyurtma #{order_id}**\n\nHolat: **TRANZIT**\n\nManzilga yetib borgach tugatishni bosing.",
         reply_markup=kb.get_finish_kb(order_id)
     )
-    await callback.answer(f"Holat: {status}")
-    await update_group_report(bot, order_id, status)
+    await callback.answer("Tranzitga chiqildi")
+    await update_group_report(bot, order_id, "TRANZIT")
 
 @router.callback_query(F.data.startswith("finish_"))
 async def handle_finish(callback: CallbackQuery, bot: Bot):
     order_id = callback.data.split("_")[1]
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
-
     now = get_now()
-    await asyncio.to_thread(update_order, order_id, {
-        'current_status': 'DONE',
-        'completed_at': now.isoformat()
-    })
-    
-    # Sheets
+    await asyncio.to_thread(update_order, order_id, {'current_status': 'DONE', 'completed_at': now.isoformat()})
     await asyncio.to_thread(update_order_status, order['row_index'], 'DONE')
-    await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO\'SH', "")
+    
+    # Check if driver has other active orders before setting to BO'SH
+    tid = callback.from_user.id
+    res = supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute()
+    if not res.data:
+        await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO\'SH', "")
 
-    await callback.message.edit_text(f"✅ **Buyurtma #{order_id} yakunlandi!**\n\nRahmat!")
+    await callback.message.edit_text(f"✅ **Buyurtma #{order_id} yakunlandi!**")
     await callback.answer("Buyurtma yakunlandi!")
-    await update_group_report(bot, order_id, "YAKUNLANDI (DONE)", is_finish=True)
+    await update_group_report(bot, order_id, "DONE", is_finish=True)

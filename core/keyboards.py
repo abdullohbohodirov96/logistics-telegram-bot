@@ -1,4 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def get_main_menu_kb(is_admin: bool = False):
     keyboard = [
@@ -77,13 +78,25 @@ def get_take_delivery_kb(order_id: str):
         [InlineKeyboardButton(text="✅ Yetkazib berishni oldim", callback_data=f"take_{order_id}")]
     ])
 
-def get_zone_kb(zone: str, order_id: str):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Oldim", callback_data=f"z_{zone}_y_{order_id}"),
-            InlineKeyboardButton(text="❌ Olmadim", callback_data=f"z_{zone}_n_{order_id}")
-        ]
-    ])
+def get_delivery_zones_kb(order_id: str, steps: list, show_transit: bool = False):
+    builder = InlineKeyboardBuilder()
+    
+    zones = ["A", "B", "C", "D"]
+    # We use 'z_a', 'z_b' format from the handler
+    active_zones = {s['step_name'].split("_")[1].upper() for s in steps if s.get('step_value') == 'y' and s['step_name'].startswith('z_')}
+    
+    for z in zones:
+        label = f"{z} ✅" if z in active_zones else f"{z} ⚪️"
+        builder.button(text=label, callback_data=f"zone_{z.lower()}_{order_id}")
+    
+    builder.adjust(2)
+    
+    if show_transit:
+        builder.row(InlineKeyboardButton(text="🚛 Tranzitga chiqish", callback_data=f"transit_{order_id}"))
+    else:
+        builder.row(InlineKeyboardButton(text="🔄 Yangilash", callback_data=f"refresh_{order_id}"))
+        
+    return builder.as_markup()
 
 def get_driving_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
