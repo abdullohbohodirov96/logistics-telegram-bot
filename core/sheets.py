@@ -210,6 +210,56 @@ def get_drivers_status_list():
         return drivers
     except Exception: return []
 
+def get_all_drivers_list():
+    """Returns a list of tuples (driver_name, driver_user_id) for all drivers."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
+        values = result.get('values', [])
+        if not values: return []
+        
+        headers = [h.strip().lower() for h in values[0]]
+        idx_name = headers.index('driver_name')
+        idx_tid = headers.index('driver_user_id')
+        
+        drivers = []
+        seen_tids = set()
+        for row in values[1:]:
+            if len(row) <= max(idx_name, idx_tid): continue
+            name = row[idx_name].strip()
+            tid = clean_tid(row[idx_tid])
+            if name and tid and tid not in seen_tids:
+                drivers.append((name, str(tid)))
+                seen_tids.add(tid)
+        return drivers
+    except Exception as e:
+        logger.error(f"Error getting all drivers list: {e}")
+        return []
+
+def get_all_cars_list():
+    """Returns a list of all normalized car numbers."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
+        values = result.get('values', [])
+        if not values: return []
+        
+        headers = [h.strip().lower() for h in values[0]]
+        idx_car = headers.index('car_number')
+        
+        cars = []
+        for row in values[1:]:
+            if len(row) <= idx_car: continue
+            car = normalize_car(row[idx_car])
+            if car and car not in cars:
+                cars.append(car)
+        return sorted(cars)
+    except Exception as e:
+        logger.error(f"Error getting all cars list: {e}")
+        return []
+
 # Keep old function name for backward compatibility in some modules
 def get_drivers():
     """Legacy wrapper for backward compatibility."""
