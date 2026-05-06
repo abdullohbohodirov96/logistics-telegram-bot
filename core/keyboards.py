@@ -11,9 +11,12 @@ def get_take_delivery_kb(order_id: str):
         [InlineKeyboardButton(text="✅ Buyurtmani qabul qilish", callback_data=f"take_{order_id}")]
     ])
 
-def get_step_kb(text: str, callback_data: str):
+def get_block_kb(block_letter: str, order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=text, callback_data=callback_data)]
+        [
+            InlineKeyboardButton(text="✅ Ortdim", callback_data=f"block_{block_letter}_ortdi_{order_id}"),
+            InlineKeyboardButton(text="❌ Ortmadim", callback_data=f"block_{block_letter}_ortmadi_{order_id}")
+        ]
     ])
 
 def get_transit_kb(order_id: str):
@@ -22,6 +25,11 @@ def get_transit_kb(order_id: str):
             InlineKeyboardButton(text="✅ Oldim", callback_data=f"tr_oldi_{order_id}"),
             InlineKeyboardButton(text="❌ Olmadim", callback_data=f"tr_olmadi_{order_id}")
         ]
+    ])
+
+def get_step_kb(text: str, callback_data: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=text, callback_data=callback_data)]
     ])
 
 def get_location_kb(text: str = "📍 Lokatsiyani yuborish"):
