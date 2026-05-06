@@ -1,87 +1,87 @@
 import logging
 import asyncio
 from aiogram import Bot
-from core.sheets import get_new_orders, get_drivers, update_order_status, update_driver_status_sheet
-from core.db import create_order
+from core.sheets import get_new_orders, update_order_status, get_drivers
+from core.db import create_order, get_order
 import core.keyboards as kb
 
 logger = logging.getLogger(__name__)
 
-is_checking = False
+# Memory cache to prevent duplicate processing within a single session
+# Format: {order_id: timestamp}
+PROCESSED_ORDERS = {}
 
 async def check_sheets_job(bot: Bot):
     """
-    Polls the ORDERS sheet for empty/NEW/YANGI status.
-    Sends task to the assigned driver and marks as 'SEND'.
-    ONLY 6 columns in ORDERS sheet are supported.
+    Background job to check Google Sheets for new orders.
     """
-    global is_checking
-    if is_checking:
-        return
-    is_checking = True
     try:
         new_orders = await asyncio.to_thread(get_new_orders)
-        if not new_orders:
-            return
-            
+        if not new_orders: return
+        
         drivers = await asyncio.to_thread(get_drivers)
         
         for order in new_orders:
-            car_number = order['car_number']
-            if car_number not in drivers:
-                logger.warning(f"Driver not found for car {car_number}. Updating status to ERROR_DRIVER_NOT_FOUND.")
-                await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
+            order_id = order['order_id']
+            
+            # Check memory cache to prevent loop if Sheets update is slow
+            if order_id in PROCESSED_ORDERS:
                 continue
                 
-            driver_info = drivers[car_number]
-            telegram_id = driver_info['telegram_id']
-            driver_name = driver_info['driver_name']
-            
-            # Save to internal DB for tracking (Supabase columns are fine)
-            db_order_data = {
-                'order_id': order['order_id'],
-                'car_number': car_number,
-                'driver_name': driver_name,
-                'driver_telegram_id': telegram_id,
-                'address': order['address'],
-                'cargo': order['cargo'],
-                'comment': order['comment'],
-                'current_status': 'SEND'
-            }
-            
-            created = create_order(db_order_data)
-            # We use row_index as 'id' in internal DB to remember where to update status in Sheets
-            # (Note: create_order might need row_index if we want to be 100% sure after restart)
-            
-            text = f"🚚 **Yangi vazifa** #{order['order_id']}\n\n"
-            text += f"**Mashina:** {car_number}\n"
-            text += f"**Manzil:** {order['address']}\n"
-            text += f"**Yuk:** {order['cargo']}\n"
-            if order.get('comment'):
-                text += f"**Izoh:** {order['comment']}\n"
-            
-            text += "\nQabul qilish uchun quyidagi tugmani bosing:"
-                
             try:
+                # 1. Create in Supabase (if doesn't exist)
+                db_order = await asyncio.to_thread(get_order, order_id)
+                if not db_order:
+                    await asyncio.to_thread(create_order, {
+                        'order_id': order_id,
+                        'car_number': order['car_number'],
+                        'address': order['address'],
+                        'cargo': order['cargo'],
+                        'comment': order['comment'],
+                        'current_status': 'NEW'
+                    })
+                
+                car_number = order['car_number']
+                driver = drivers.get(car_number)
+                
+                if not driver:
+                    logger.warning(f"Driver not found for car {car_number}. Updating status to ERROR_DRIVER_NOT_FOUND.")
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
+                    continue
+                
+                driver_name = driver['driver_name']
+                telegram_id = driver['telegram_id']
+                
+                # 2. Send to Driver
+                msg_text = (
+                    f"🆕 **YANGI BUYURTMA!**\n\n"
+                    f"🆔 **ID:** {order_id}\n"
+                    f"📍 **Manzil:** {order['address']}\n"
+                    f"📦 **Yuk:** {order['cargo']}\n"
+                    f"📝 **Izoh:** {order['comment']}\n"
+                )
+                
                 await bot.send_message(
                     chat_id=telegram_id,
-                    text=text,
+                    text=msg_text,
                     parse_mode="Markdown",
-                    reply_markup=kb.get_take_delivery_kb(order['order_id'])
+                    reply_markup=kb.get_take_delivery_kb(order_id)
                 )
+                
                 # 3. Update Sheets status to 'SENT'
                 await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
-                logger.info(f"Order {order['order_id']} sent to driver {driver_name} for car {car_number}")
+                logger.info(f"Order {order_id} sent to driver {driver_name} for car {car_number}")
                 
-                # 4. Immediate Group Report (NEW status)
+                # Mark as processed in memory
+                PROCESSED_ORDERS[order_id] = True
+                
+                # 4. Immediate Group Report
                 from core.handlers.delivery import update_group_report
-                await update_group_report(bot, order['order_id'])
+                await update_group_report(bot, order_id)
                 
             except Exception as e:
-                logger.error(f"Error processing order {order.get('order_id')}: {e}")
-                await asyncio.to_thread(update_order_status, order['row_index'], f"ERROR: {str(e)[:20]}")
+                logger.error(f"Error processing order {order_id}: {e}")
+                # We don't update Sheets to ERROR here to allow retry on next poll if it was a temp issue
                 
     except Exception as e:
         logger.error(f"Error in check_sheets_job: {e}")
-    finally:
-        is_checking = False

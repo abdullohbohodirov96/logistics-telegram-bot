@@ -131,6 +131,15 @@ def get_new_orders():
         logger.error(f"Error in get_new_orders: {e}")
         return []
 
+def col_to_letter(n):
+    """Convert column index (0-based) to Excel-style letter (A, B, C, ..., AA, AB, ...)."""
+    string = ""
+    n += 1
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        string = chr(65 + remainder) + string
+    return string
+
 def update_order_status(row_index: int, status: str):
     sheets = get_sheets_service()
     if not sheets: return
@@ -138,14 +147,18 @@ def update_order_status(row_index: int, status: str):
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
         headers = result.get('values', [[]])[0]
         idx = fuzzy_match_header(headers, ['status', 'holat'])
-        if idx == -1: return
-        col_letter = chr(ord('A') + idx)
+        if idx == -1: 
+            logger.error(f"Status column not found. Headers: {headers}")
+            return
+            
+        col_letter = col_to_letter(idx)
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
             valueInputOption='USER_ENTERED',
             body={'values': [[status]]}
         ).execute()
+        logger.info(f"Sheets status updated to {status} at row {row_index} column {col_letter}")
     except Exception as e:
         logger.error(f"Error updating order status: {e}")
 
