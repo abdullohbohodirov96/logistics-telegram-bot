@@ -1,11 +1,12 @@
 import logging
 import asyncio
 from datetime import datetime
+import pytz
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from core.config import GROUP_CHAT_ID
+from core.config import GROUP_CHAT_ID, TIMEZONE
 from core.db import get_order, update_order, save_order_step, get_order_steps
 from core.sheets import update_order_status, update_driver_status_sheet, get_driver_by_tid
 import core.keyboards as kb
@@ -33,7 +34,7 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBOR
     # Zone status summary
     zones = {"A": "⚪️", "B": "⚪️", "C": "⚪️", "D": "⚪️"}
     for s in steps:
-        if s['step_name'].startswith("zone_"):
+        if s['step_name'].startswith("z_"):
             z = s['step_name'].split("_")[1].upper()
             if z in zones:
                 zones[z] = "✅" if s.get('step_value') == 'y' else "❌"
@@ -46,6 +47,7 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBOR
     text += f"➖➖➖➖➖➖➖➖➖➖\n"
     text += f"🏗 **Yuklash:** A:{zones['A']} B:{zones['B']} C:{zones['C']} D:{zones['D']}\n"
     text += f"📊 **Status:** {status_text}\n"
+    
     if start_time_dt:
         text += f"⏰ **Boshlandi:** {format_time(start_time_dt)}\n"
     else:
@@ -70,84 +72,102 @@ async def update_group_report(bot: Bot, order_id: str, status_text: str = "YUBOR
                 )
                 return
             except Exception:
-                pass # Fallback to new message
+                pass
         
-        msg = await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=text,
-            parse_mode="Markdown"
-        )
+        msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
         await asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)})
     except Exception as e:
-        logger.error(f"Error in process_take_delivery: {e}")
-        return
+        logger.error(f"Error in update_group_report: {e}")
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
-    await callback.answer()
     order_id = callback.data.split("_")[1]
-    driver = await asyncio.to_thread(get_driver_by_tid, callback.from_user.id)
-    if not driver:
-        await callback.message.answer("❌ Ro'yxatda yo'qsiz.")
-        return
-    
-    if driver['status'] == 'BAND' and driver['current_order_id'] != order_id:
-        await callback.message.answer(f"⚠️ Sizda #{driver['current_order_id']} buyurtma bor.")
-        return
-
     order = await asyncio.to_thread(get_order, order_id)
-    if not order or order.get('current_status') == 'OLDI':
-        await callback.message.answer("⚠️ Order olingan yoki mavjud emas.")
+    if not order:
+        await callback.answer("Buyurtma topilmadi", show_alert=True)
         return
 
     now = get_now()
-    # Update Sheets & DB
-    await asyncio.to_thread(update_order_status, int(order['id']), 'OLDI')
-    await asyncio.to_thread(update_driver_status_sheet, driver['car_number'], 'BAND', order_id)
     await asyncio.to_thread(update_order, order_id, {
-        'current_status': 'OLDI', 'start_time': now.isoformat(),
-        'driver_name': driver['driver_name'], 'car_number': driver['car_number']
+        'current_status': 'OLDI',
+        'start_time': now.isoformat()
     })
-    await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'take_delivery', 'time_text': format_time(now)})
     
-    await update_group_report(bot, order_id, "🚚 Yuk olinmoqda")
-    await callback.message.edit_text(f"✅ Buyurtma #{order_id} qabul qilindi.")
-    await callback.message.answer("A-blok bo'yicha yuk oldingizmi?", reply_markup=kb.get_zone_kb("A", order_id))
+    # Update Sheets
+    await asyncio.to_thread(update_order_status, order['row_index'], 'OLDI')
+    await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BAND', order_id)
+
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nYuklash bosqichlarini belgilang:",
+        reply_markup=kb.get_zone_kb("A", order_id)
+    )
+    await callback.answer("Buyurtma qabul qilindi!")
+    await update_group_report(bot, order_id, "YUKLANDI (OLDI)")
 
 @router.callback_query(F.data.startswith("z_"))
 async def handle_zones(callback: CallbackQuery, bot: Bot):
-    await callback.answer()
-    _, zone, val, order_id = callback.data.split("_")
+    # z_{zone}_{val}_{order_id}
+    parts = callback.data.split("_")
+    zone = parts[1].upper()
+    val = parts[2]
+    order_id = parts[3]
     
-    await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': f'zone_{zone}', 'step_value': val, 'time_text': format_time(get_now())})
-    await update_group_report(bot, order_id, f"🏗 {zone}-blok yuklandi")
+    await asyncio.to_thread(save_order_step, order_id, f"z_{zone.lower()}", val)
     
-    status_icon = "✅ Ha" if val == 'y' else "❌ Yo'q"
-    await callback.message.edit_text(f"{zone}-blok: {status_icon}")
-    ZONES = ["A", "B", "C", "D"]
-    idx = ZONES.index(zone)
-    if idx + 1 < len(ZONES):
-        await callback.message.answer(f"{ZONES[idx+1]}-blok yuk oldingizmi?", reply_markup=kb.get_zone_kb(ZONES[idx+1], order_id))
+    next_zones = {"A": "B", "B": "C", "C": "D"}
+    if zone in next_zones:
+        next_z = next_zones[zone]
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\nKeyingi bosqich: **{next_z}-blok**",
+            reply_markup=kb.get_zone_kb(next_z, order_id)
+        )
     else:
-        await callback.message.answer("Transit bormi?", reply_markup=kb.get_transit_kb(order_id))
+        # After D, ask for transit
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\nHamma bloklar yakunlandi. Transit bormi?",
+            reply_markup=kb.get_transit_kb(order_id)
+        )
+    
+    await callback.answer(f"{zone}-blok belgilandi")
+    await update_group_report(bot, order_id, f"{zone}-blok {('✅' if val=='y' else '❌')}")
+
+@router.callback_query(F.data.startswith("tr_"))
+async def handle_transit(callback: CallbackQuery, bot: Bot):
+    # tr_{val}_{order_id}
+    parts = callback.data.split("_")
+    val = parts[1]
+    order_id = parts[2]
+    
+    status = "TRANZIT" if val == "y" else "YETKAZISH"
+    order = await asyncio.to_thread(get_order, order_id)
+    
+    await asyncio.to_thread(update_order, order_id, {'current_status': status})
+    if order:
+        await asyncio.to_thread(update_order_status, order['row_index'], status)
+    
+    await callback.message.edit_text(
+        f"📦 **Buyurtma #{order_id}**\n\nHolat: **{status}**\n\nManzilga yetib borib, tushirib bo'lgach tugatishni bosing.",
+        reply_markup=kb.get_finish_kb(order_id)
+    )
+    await callback.answer(f"Holat: {status}")
+    await update_group_report(bot, order_id, status)
 
 @router.callback_query(F.data.startswith("finish_"))
-async def finish_delivery(callback: CallbackQuery, bot: Bot):
-    await callback.answer()
-    order_id = callback.data.split("finish_")[1]
-    now = get_now()
-    
+async def handle_finish(callback: CallbackQuery, bot: Bot):
+    order_id = callback.data.split("_")[1]
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
+
+    now = get_now()
+    await asyncio.to_thread(update_order, order_id, {
+        'current_status': 'DONE',
+        'completed_at': now.isoformat()
+    })
     
-    await asyncio.to_thread(update_order_status, int(order['id']), 'DONE')
-    await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO\'SH', '')
-    await asyncio.to_thread(update_order, order_id, {'current_status': 'DONE', 'completed_at': now.isoformat()})
-    await asyncio.to_thread(save_order_step, {'order_id': order_id, 'step_name': 'finish', 'time_text': format_time(now)})
-    
-    await update_group_report(bot, order_id, "✅ YETKAZIB BERILDI", is_finish=True)
-    
-    steps = await asyncio.to_thread(get_order_steps, order_id)
-    start_time = get_order_start_time(order, steps)
-    dur_text = f"\nKetgan vaqt: {format_duration(int((now - start_time).total_seconds() / 60))}" if start_time else ""
-    await callback.message.edit_text(f"✅ Vazifa #{order_id} yakunlandi.{dur_text}")
+    # Sheets
+    await asyncio.to_thread(update_order_status, order['row_index'], 'DONE')
+    await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO\'SH', "")
+
+    await callback.message.edit_text(f"✅ **Buyurtma #{order_id} yakunlandi!**\n\nRahmat!")
+    await callback.answer("Buyurtma yakunlandi!")
+    await update_group_report(bot, order_id, "YAKUNLANDI (DONE)", is_finish=True)
