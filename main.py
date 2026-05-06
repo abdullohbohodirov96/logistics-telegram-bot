@@ -26,6 +26,10 @@ async def dummy_server():
     await server.serve()
 
 async def main():
+    import uuid
+    instance_id = str(uuid.uuid4())[:8]
+    logger.info(f"--- Bot Instance {instance_id} Starting ---")
+    
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN is not set. Exiting.")
         return
