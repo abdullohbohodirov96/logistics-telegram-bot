@@ -271,9 +271,10 @@ def find_order_row(order_id: str) -> int:
         logger.error(f"Error finding order row: {e}")
         return -1
 
-def update_order_status_by_id(order_id: str, status: str):
+def update_order_status_by_order_id(order_id: str, status: str):
+    """Finds row by order_id and updates status in Sheets."""
     row_index = find_order_row(order_id)
     if row_index != -1:
         update_order_status(row_index, status)
     else:
-        logger.error(f"Could not update status for {order_id}: Row not found.")
+        logger.error(f"Could not update Sheets status for {order_id}: Row not found.")

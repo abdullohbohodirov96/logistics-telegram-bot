@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 
 from core.config import GROUP_CHAT_ID
 from core.db import get_order, update_order, save_order_step, get_order_steps, supabase
-from core.sheets import update_order_status_by_id, update_driver_status_sheet, get_driver_by_tid
+from core.sheets import update_order_status_by_order_id, update_driver_status_sheet, get_driver_by_tid
 import core.keyboards as kb
 from core.utils import get_now, format_time, format_duration, get_order_start_time
 
@@ -86,18 +86,35 @@ async def show_my_tasks(message: Message, bot: Bot):
 async def handle_take_delivery(callback: CallbackQuery, bot: Bot):
     order_id = callback.data.split("_")[1]
     order = await asyncio.to_thread(get_order, order_id)
+    
     if not order:
-        await callback.answer("Buyurtma topilmadi", show_alert=True)
+        await callback.answer("❌ Buyurtma topilmadi", show_alert=True)
         return
+
+    order_id = order.get("order_id")
+    if not order_id:
+        await callback.answer("❌ Buyurtma ID topilmadi", show_alert=True)
+        return
+
     now = get_now()
-    asyncio.create_task(asyncio.to_thread(update_order, order_id, {'current_status': 'OLDI', 'start_time': now.isoformat()}))
-    asyncio.create_task(asyncio.to_thread(update_order_status_by_id, order_id, 'OLDI'))
-    asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BAND', order_id))
+    # 1. Update Supabase (PATCH)
+    asyncio.create_task(asyncio.to_thread(update_order, order_id, {
+        'current_status': 'OLDI', 
+        'start_time': now.isoformat(),
+        'driver_telegram_id': callback.from_user.id
+    }))
+    
+    # 2. Update Sheets (by ID)
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'OLDI'))
+    
+    # 3. Update Driver Status
+    asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND', order_id))
+    
     await callback.message.edit_text(
         f"📦 **Buyurtma #{order_id}**\n\nYuklash bosqichlarini belgilang:",
         reply_markup=kb.get_delivery_zones_kb(order_id, [])
     )
-    await callback.answer("Qabul qilindi!")
+    await callback.answer("✅ Buyurtma olindi")
     asyncio.create_task(update_group_report(bot, order_id, "OLDI"))
 
 @router.callback_query(F.data.startswith("zone_"))
@@ -121,7 +138,7 @@ async def handle_zones(callback: CallbackQuery, bot: Bot):
 async def handle_transit(callback: CallbackQuery, bot: Bot):
     order_id = callback.data.split("_")[1]
     asyncio.create_task(asyncio.to_thread(update_order, order_id, {'current_status': 'TRANZIT'}))
-    asyncio.create_task(asyncio.to_thread(update_order_status_by_id, order_id, 'TRANZIT'))
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'TRANZIT'))
     await callback.message.edit_text(
         f"📦 **Buyurtma #{order_id}**\n\nHolat: **TRANZIT**\n\nManzilga yetib borgach tugatishni bosing.",
         reply_markup=kb.get_finish_kb(order_id)
@@ -136,12 +153,12 @@ async def handle_finish(callback: CallbackQuery, bot: Bot):
     if not order: return
     now = get_now()
     asyncio.create_task(asyncio.to_thread(update_order, order_id, {'current_status': 'DONE', 'completed_at': now.isoformat()}))
-    asyncio.create_task(asyncio.to_thread(update_order_status_by_id, order_id, 'DONE'))
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'DONE'))
     async def release_driver():
         tid = callback.from_user.id
         res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'DONE').execute())
         if not res.data:
-            await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO\'SH', "")
+            await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BO\'SH', "")
     asyncio.create_task(release_driver())
     await callback.message.edit_text(f"✅ **Buyurtma #{order_id} yakunlandi!**")
     await callback.answer("Tugallandi!")
