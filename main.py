@@ -22,10 +22,10 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Revert/Clear Webhook anyway to allow Polling
-    logger.info("Clearing any existing webhooks for clean Polling/Worker start...")
+    # Forceful cleanup
+    logger.info("Aggressive cleanup: clearing webhooks and waiting 5s for zombie processes...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.sleep(2)
+    await asyncio.sleep(5)
 
     # Start Google Sheets scheduler
     if is_sheets_configured():
