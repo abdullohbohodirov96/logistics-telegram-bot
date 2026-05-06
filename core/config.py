@@ -7,7 +7,12 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+
+# Google Sheets Configuration
+GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID") or os.getenv("GOOGLE_SHEET_ID")
+DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers")
+ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders")
+
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 
@@ -24,7 +29,7 @@ except json.JSONDecodeError:
 
 TIMEZONE = "Asia/Tashkent"
 
-# Control Flags - Force Sheets for revert
+# Control Flags
 USE_SHEETS = True
 IS_SHEETS_ENABLED = True
 

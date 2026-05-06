@@ -27,7 +27,9 @@ logger = logging.getLogger("dashboard")
 # ── Config ──────────────────────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
+GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID") or os.getenv("GOOGLE_SHEET_ID", "")
+DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers")
+ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders")
 TZ = timezone(timedelta(hours=5))  # Asia/Tashkent
 
 # Google credentials — try both env var names
@@ -101,7 +103,7 @@ def sheets_read_cars() -> list:
         return []
 
     try:
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/DRIVERS!A1:Z"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/{DRIVERS_SHEET_NAME}!A1:Z"
         r = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         r.raise_for_status()
         data = r.json().get("values", [])

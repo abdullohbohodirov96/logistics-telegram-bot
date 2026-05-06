@@ -3,7 +3,7 @@ import re
 import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from core.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID
+from core.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID, DRIVERS_SHEET_NAME, ORDERS_SHEET_NAME
 from core.cache import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def get_drivers():
     try:
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='DRIVERS!A1:Z'
+            range=f'{DRIVERS_SHEET_NAME}!A1:Z'
         ).execute()
         values = result.get('values', [])
         if not values: return {}
@@ -97,7 +97,7 @@ def get_new_orders():
     try:
         result = sheets.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range='ORDERS!A1:Z'
+            range=f'{ORDERS_SHEET_NAME}!A1:Z'
         ).execute()
         values = result.get('values', [])
         if not values: return []
@@ -139,13 +139,13 @@ def update_order_status(row_index: int, status: str):
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='ORDERS!1:1').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
         headers = [h.strip().lower() for h in result.get('values', [[]])[0]]
         idx = headers.index('status')
         col_letter = chr(ord('A') + idx)
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'ORDERS!{col_letter}{row_index}',
+            range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
             valueInputOption='USER_ENTERED',
             body={'values': [[status]]}
         ).execute()
@@ -157,7 +157,7 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A1:Z').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
         values = result.get('values', [])
         if not values: return
         headers = [h.strip().lower() for h in values[0]]
@@ -175,13 +175,13 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
             col_order = chr(ord('A') + idx_order)
             sheets.values().update(
                 spreadsheetId=GOOGLE_SHEET_ID,
-                range=f'DRIVERS!{col_status}{row_num}',
+                range=f'{DRIVERS_SHEET_NAME}!{col_status}{row_num}',
                 valueInputOption='USER_ENTERED',
                 body={'values': [[status]]}
             ).execute()
             sheets.values().update(
                 spreadsheetId=GOOGLE_SHEET_ID,
-                range=f'DRIVERS!{col_order}{row_num}',
+                range=f'{DRIVERS_SHEET_NAME}!{col_order}{row_num}',
                 valueInputOption='USER_ENTERED',
                 body={'values': [[current_order_id]]}
             ).execute()
@@ -194,7 +194,7 @@ def get_all_drivers_list():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A1:Z').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
         values = result.get('values', [])
         if not values: return []
         headers = [h.strip().lower() for h in values[0]]
@@ -218,7 +218,7 @@ def get_all_cars_list():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A1:Z').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
         values = result.get('values', [])
         if not values: return []
         headers = [h.strip().lower() for h in values[0]]
@@ -236,6 +236,6 @@ def get_drivers_status():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='DRIVERS!A2:Z').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A2:Z').execute()
         return result.get('values', [])
     except Exception: return []

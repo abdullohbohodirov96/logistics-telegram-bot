@@ -288,10 +288,10 @@ async def finish_delivery(callback: CallbackQuery, bot: Bot):
             await asyncio.to_thread(update_driver_status_sheet, order['car_number'], 'BO‘SH', '')
             # Find and update row in ORDERS sheet
             try:
-                from core.config import GOOGLE_SHEET_ID
+                from core.config import GOOGLE_SHEET_ID, ORDERS_SHEET_NAME
                 sheets = await asyncio.to_thread(get_sheets_service)
                 if sheets:
-                    res = await asyncio.to_thread(sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range='ORDERS!A:A').execute)
+                    res = await asyncio.to_thread(sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:A').execute)
                     vals = res.get('values', [])
                     for i, row in enumerate(vals):
                         if row and row[0].strip() == order_id:
