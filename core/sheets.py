@@ -108,7 +108,16 @@ def get_new_orders():
                 })
         return new_orders
     except Exception as e:
-        logger.error(f"Error getting new orders: {e}")
+        if "Requested entity was not found" in str(e):
+            logger.error(f"❌ XATO: '{ORDERS_SHEET_NAME}' tab topilmadi.")
+            try:
+                # Debug: list all available sheets
+                meta = sheets.get(spreadsheetId=GOOGLE_SHEET_ID).execute()
+                titles = [s['properties']['title'] for s in meta.get('sheets', [])]
+                logger.info(f"Mavjud sheet nomlari: {titles}")
+            except: pass
+        else:
+            logger.error(f"Error getting new orders: {e}")
         return []
 
 def update_order_status(row_index: int, status: str):
