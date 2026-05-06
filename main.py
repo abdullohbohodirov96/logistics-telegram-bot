@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, is_sheets_configured, WEBHOOK_URL, PORT
@@ -13,23 +15,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def dummy_server():
-    """A dummy server to keep Render Web Service happy if needed."""
-    from fastapi import FastAPI
-    import uvicorn
-    app = FastAPI()
-    @app.get("/")
-    async def root(): return {"status": "ok"}
-    
-    config = uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="warning")
-    server = uvicorn.Server(config)
-    await server.serve()
+async def on_startup(bot: Bot):
+    if WEBHOOK_URL:
+        webhook_path = f"/webhook/{BOT_TOKEN.split(':')[1]}"
+        full_url = f"{WEBHOOK_URL.rstrip('/')}{webhook_path}"
+        logger.info(f"Setting webhook to: {full_url}")
+        await bot.set_webhook(full_url, drop_pending_updates=True)
+    else:
+        logger.info("No WEBHOOK_URL provided. Deleting webhook and using polling...")
+        await bot.delete_webhook(drop_pending_updates=True)
 
 async def main():
-    import uuid
-    instance_id = str(uuid.uuid4())[:8]
-    logger.info(f"--- Bot Instance {instance_id} Starting ---")
-    
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN is not set. Exiting.")
         return
@@ -37,8 +33,9 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+    dp.startup.register(on_startup)
 
-    # Start Google Sheets scheduler if configured
+    # Start Google Sheets scheduler
     if is_sheets_configured():
         try:
             from core.scheduler import check_sheets_job
@@ -48,33 +45,33 @@ async def main():
             scheduler.start()
         except Exception as e:
             logger.error(f"Failed to start Google Sheets scheduler: {e}")
-    else:
-        logger.warning("Google Sheets credentials are MISSING. Scheduler NOT started.")
 
-    # Handle Webhook vs Polling
     if WEBHOOK_URL:
-        logger.info(f"Setting webhook to {WEBHOOK_URL}...")
-        # Webhook logic would go here if needed, but the user requested one instance of polling.
-        # If they use Webhook, we should implement it.
-        # For now, if WEBHOOK_URL is provided, we'll assume they want to use it eventually.
-        pass
-
-    logger.info("Dropping pending updates and starting polling...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.sleep(2) # Small cooldown to allow other instances to settle
-    
-    # Run polling and dummy server (for Render) concurrently
-    tasks = [dp.start_polling(bot)]
-    if os.getenv("RENDER"): # Only start dummy server on Render
-        logger.info(f"Starting dummy server on port {PORT} for Render...")
-        tasks.append(dummy_server())
-
-    try:
-        await asyncio.gather(*tasks)
-    except Exception as e:
-        logger.error(f"Critical bot error: {e}")
-    finally:
-        await bot.session.close()
+        # WEBHOOK MODE
+        webhook_path = f"/webhook/{BOT_TOKEN.split(':')[1]}"
+        app = web.Application()
+        
+        # Simple health check
+        async def handle_root(request): return web.json_response({"status": "ok", "mode": "webhook"})
+        app.router.add_get("/", handle_root)
+        
+        handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+        handler.register(app, path=webhook_path)
+        setup_application(app, dp, bot=bot)
+        
+        logger.info(f"Starting Webhook server on port {PORT}...")
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+        
+        # Keep alive
+        while True: await asyncio.sleep(3600)
+    else:
+        # POLLING MODE
+        logger.info("Starting Polling mode...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
 
 if __name__ == '__main__':
     try:
