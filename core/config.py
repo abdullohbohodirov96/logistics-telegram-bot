@@ -24,16 +24,9 @@ except json.JSONDecodeError:
 
 TIMEZONE = "Asia/Tashkent"
 
-# Odoo Configuration with strict cleaning
-ODOO_URL = (os.getenv("ODOO_URL") or "").strip().rstrip("/")
-ODOO_DB = (os.getenv("ODOO_DB") or "").strip()
-ODOO_USERNAME = (os.getenv("ODOO_USERNAME") or "").strip()
-ODOO_API_KEY = (os.getenv("ODOO_API_KEY") or "").strip()
+# Control Flags - Force Sheets for revert
+USE_SHEETS = True
+IS_SHEETS_ENABLED = True
 
-# Control Flags
-ODOO_USE_SHEETS = os.getenv("ODOO_USE_SHEETS", "true").lower() == "true"
-USE_SHEETS = os.getenv("USE_SHEETS", "true").lower() == "true"
-IS_SHEETS_ENABLED = ODOO_USE_SHEETS and USE_SHEETS
-
-def is_odoo_configured():
-    return all([ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY])
+def is_sheets_configured():
+    return bool(GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_INFO)
