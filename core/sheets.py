@@ -31,7 +31,7 @@ def get_sheets_service():
 
 def normalize_car(val: str):
     if not val: return ""
-    return re.sub(r'[^A-Z0-9]', '', val.strip().upper())
+    return re.sub(r'[^A-Z0-9]', '', str(val).strip().upper())
 
 def clean_tid(val: str):
     if not val: return None
@@ -73,7 +73,7 @@ def get_driver_by_tid(tid: int):
         return None
 
 def get_new_orders():
-    """Read orders from ORDERS sheet where status is 'YANGI'."""
+    """Read orders from ORDERS sheet where status is empty or 'NEW'."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
@@ -93,13 +93,15 @@ def get_new_orders():
         
         new_orders = []
         for i, row in enumerate(values[1:]):
-            if len(row) <= idx_status: continue
-            status = row[idx_status].strip().upper()
-            if status in ['YANGI', 'SEND']: # Backward compatibility for 'SEND'
+            status = ""
+            if len(row) > idx_status:
+                status = row[idx_status].strip().upper()
+            
+            if status in ['', 'NEW', 'YANGI']:
                 new_orders.append({
                     'row_index': i + 2,
-                    'order_id': row[idx_id].strip(),
-                    'car_number': normalize_car(row[idx_car]),
+                    'order_id': row[idx_id].strip() if len(row) > idx_id else str(i+1),
+                    'car_number': normalize_car(row[idx_car]) if len(row) > idx_car else '',
                     'address': row[idx_addr].strip() if len(row) > idx_addr else '',
                     'cargo': row[idx_cargo].strip() if len(row) > idx_cargo else '',
                     'comment': row[idx_comment].strip() if len(row) > idx_comment else ''
@@ -109,45 +111,31 @@ def get_new_orders():
         logger.error(f"Error getting new orders: {e}")
         return []
 
-def update_order_status_detailed(row_index: int, status: str, driver_data: dict = None, start_time: str = None, finish_time: str = None, duration: str = None):
-    """Update order row with status and driver/time info."""
+def update_order_status(row_index: int, status: str):
+    """ONLY update the status column in ORDERS sheet. No extra columns added."""
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        # Get headers to find columns
+        # Find 'status' column index
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
         headers = [h.strip().lower() for h in result.get('values', [[]])[0]]
-        
-        updates = []
-        
-        def add_update(col_name, val):
-            if col_name in headers:
-                idx = headers.index(col_name)
-                col_letter = chr(ord('A') + idx)
-                updates.append({
-                    'range': f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
-                    'values': [[val]]
-                })
-
-        add_update('status', status)
-        if driver_data:
-            add_update('driver_user_id', driver_data.get('user_id'))
-            add_update('driver_name', driver_data.get('name'))
-            add_update('car_number', driver_data.get('car_number'))
-        if start_time: add_update('start_time', start_time)
-        if finish_time: add_update('finish_time', finish_time)
-        if duration: add_update('duration', duration)
-
-        if updates:
-            sheets.values().batchUpdate(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                body={'valueInputOption': 'USER_ENTERED', 'data': updates}
-            ).execute()
+        if 'status' not in headers:
+            logger.error("'status' column not found in ORDERS sheet.")
+            return
+            
+        idx = headers.index('status')
+        col_letter = chr(ord('A') + idx)
+        sheets.values().update(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
+            valueInputOption='USER_ENTERED',
+            body={'values': [[status]]}
+        ).execute()
     except Exception as e:
-        logger.error(f"Error in update_order_status_detailed: {e}")
+        logger.error(f"Error updating order status: {e}")
 
 def update_driver_status_sheet(car_number: str, status: str, current_order_id: str = ""):
-    """Update driver status and order_id in DRIVERS sheet."""
+    """Update driver status and current_order_id in DRIVERS sheet."""
     sheets = get_sheets_service()
     if not sheets: return
     try:
@@ -184,7 +172,6 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
         logger.error(f"Error updating driver status: {e}")
 
 def get_drivers_status_list():
-    """Get all drivers and their current status for admin command."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
@@ -211,18 +198,15 @@ def get_drivers_status_list():
     except Exception: return []
 
 def get_all_drivers_list():
-    """Returns a list of tuples (driver_name, driver_user_id) for all drivers."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
         values = result.get('values', [])
         if not values: return []
-        
         headers = [h.strip().lower() for h in values[0]]
         idx_name = headers.index('driver_name')
         idx_tid = headers.index('driver_user_id')
-        
         drivers = []
         seen_tids = set()
         for row in values[1:]:
@@ -233,36 +217,26 @@ def get_all_drivers_list():
                 drivers.append((name, str(tid)))
                 seen_tids.add(tid)
         return drivers
-    except Exception as e:
-        logger.error(f"Error getting all drivers list: {e}")
-        return []
+    except: return []
 
 def get_all_cars_list():
-    """Returns a list of all normalized car numbers."""
     sheets = get_sheets_service()
     if not sheets: return []
     try:
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z').execute()
         values = result.get('values', [])
         if not values: return []
-        
         headers = [h.strip().lower() for h in values[0]]
         idx_car = headers.index('car_number')
-        
-        cars = []
+        cars = set()
         for row in values[1:]:
             if len(row) <= idx_car: continue
             car = normalize_car(row[idx_car])
-            if car and car not in cars:
-                cars.append(car)
-        return sorted(cars)
-    except Exception as e:
-        logger.error(f"Error getting all cars list: {e}")
-        return []
+            if car: cars.add(car)
+        return sorted(list(cars))
+    except: return []
 
-# Keep old function name for backward compatibility in some modules
 def get_drivers():
-    """Legacy wrapper for backward compatibility."""
     sheets = get_sheets_service()
     if not sheets: return {}
     try:

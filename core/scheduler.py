@@ -11,8 +11,9 @@ is_checking = False
 
 async def check_sheets_job(bot: Bot):
     """
-    Polls the ORDERS sheet for status='YANGI' or 'SEND'.
-    Sends task to the assigned driver and marks as 'SENT'.
+    Polls the ORDERS sheet for empty/NEW/YANGI status.
+    Sends task to the assigned driver and marks as 'SEND'.
+    ONLY 6 columns in ORDERS sheet are supported.
     """
     global is_checking
     if is_checking:
@@ -28,7 +29,7 @@ async def check_sheets_job(bot: Bot):
         for order in new_orders:
             car_number = order['car_number']
             if car_number not in drivers:
-                logger.warning(f"Driver not found for car {car_number}. Setting status to ERROR_DRIVER_NOT_FOUND.")
+                logger.warning(f"Driver not found for car {car_number}. Updating status to ERROR_DRIVER_NOT_FOUND.")
                 await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
                 continue
                 
@@ -36,6 +37,7 @@ async def check_sheets_job(bot: Bot):
             telegram_id = driver_info['telegram_id']
             driver_name = driver_info['driver_name']
             
+            # Save to internal DB for tracking (Supabase columns are fine)
             db_order_data = {
                 'order_id': order['order_id'],
                 'car_number': car_number,
@@ -44,36 +46,35 @@ async def check_sheets_job(bot: Bot):
                 'address': order['address'],
                 'cargo': order['cargo'],
                 'comment': order['comment'],
-                'current_status': 'SENT'
+                'current_status': 'SEND'
             }
             
             created = create_order(db_order_data)
-            if created:
-                text = f"🚚 **Yangi vazifa** #{order['order_id']}\n\n"
-                text += f"**Mashina:** {car_number}\n"
-                text += f"**Manzil:** {order['address']}\n"
-                text += f"**Yuk:** {order['cargo']}\n"
-                if order.get('comment'):
-                    text += f"**Izoh:** {order['comment']}\n"
+            # We use row_index as 'id' in internal DB to remember where to update status in Sheets
+            # (Note: create_order might need row_index if we want to be 100% sure after restart)
+            
+            text = f"🚚 **Yangi vazifa** #{order['order_id']}\n\n"
+            text += f"**Mashina:** {car_number}\n"
+            text += f"**Manzil:** {order['address']}\n"
+            text += f"**Yuk:** {order['cargo']}\n"
+            if order.get('comment'):
+                text += f"**Izoh:** {order['comment']}\n"
+            
+            text += "\nQabul qilish uchun quyidagi tugmani bosing:"
                 
-                text += "\nQabul qilish uchun quyidagi tugmani bosing:"
-                    
-                try:
-                    await bot.send_message(
-                        chat_id=telegram_id,
-                        text=text,
-                        parse_mode="Markdown",
-                        reply_markup=kb.get_take_delivery_kb(order['order_id'])
-                    )
-                    # Mark as SENT in Sheets
-                    await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
-                    logger.info(f"Order {order['order_id']} sent to driver {driver_name}.")
-                except Exception as e:
-                    logger.error(f"Failed to send to driver {driver_name} ({telegram_id}): {e}")
-                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_BOT_BLOCKED')
-            else:
-                # Order already processed/sent
-                pass
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=text,
+                    parse_mode="Markdown",
+                    reply_markup=kb.get_take_delivery_kb(order['order_id'])
+                )
+                # Update Sheets - ONLY STATUS COLUMN
+                await asyncio.to_thread(update_order_status, order['row_index'], 'SEND')
+                logger.info(f"Order {order['order_id']} sent to driver {driver_name}.")
+            except Exception as e:
+                logger.error(f"Failed to send to driver {driver_name} ({telegram_id}): {e}")
+                await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_BOT_BLOCKED')
                 
     except Exception as e:
         logger.error(f"Error in check_sheets_job: {e}")
