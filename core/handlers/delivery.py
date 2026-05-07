@@ -89,31 +89,46 @@ async def update_group_report(bot: Bot, order_id: str):
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    order_id = callback.data.split("_")[1]; order = await asyncio.to_thread(get_order, order_id)
+    await callback.answer()
+    order_id = callback.data.split("_")[1]
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi", show_alert=True)
+        return
+    order = await asyncio.to_thread(get_order, order_id)
     if not order: return
     now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'current_status': 'QABUL_QILINDI', 'accepted_at': now, 'driver_telegram_id': callback.from_user.id, 'driver_name': callback.from_user.full_name})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'QABUL_QILINDI'))
     asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND (QABUL QILDI)', order_id))
-    await state.update_data(order_id=order_id); await state.set_state(DeliveryStates.A_BLOCK)
-    await callback.message.edit_text(f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\nSavol: **A-blokdan narsa ortdingizmi?**", reply_markup=kb.get_block_kb("A", order_id))
+    await state.update_data(order_id=order_id)
+    await state.set_state(DeliveryStates.A_BLOCK)
+    await callback.message.edit_text(f"📦 Buyurtma #{order_id} qabul qilindi.\n\nSavol: A-blokdan narsa ortdingizmi?", reply_markup=kb.get_block_kb("A", order_id))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.callback_query(F.data.startswith("block_"))
 async def handle_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    parts = callback.data.split("_"); letter, status, order_id = parts[1], parts[2].upper(), parts[3]; now = get_now().isoformat()
+    await callback.answer()
+    parts = callback.data.split("_")
+    letter, status, order_id = parts[1], parts[2].upper(), parts[3]
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi", show_alert=True)
+        return
+    await state.update_data(order_id=order_id)
+    now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {f'{letter.lower()}_block_at': now, f'{letter.lower()}_block_status': status})
     next_map = {"A": ("B", DeliveryStates.B_BLOCK), "B": ("C", DeliveryStates.C_BLOCK), "C": ("D", DeliveryStates.D_BLOCK)}
     if letter in next_map:
-        next_letter, next_state = next_map[letter]; await state.set_state(next_state)
-        await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **{next_letter}-blokdan narsa ortdingizmi?**", reply_markup=kb.get_block_kb(next_letter, order_id))
+        next_letter, next_state = next_map[letter]
+        await state.set_state(next_state)
+        await callback.message.edit_text(f"📦 Buyurtma #{order_id}\n\nSavol: {next_letter}-blokdan narsa ortdingizmi?", reply_markup=kb.get_block_kb(next_letter, order_id))
     else:
         await state.set_state(DeliveryStates.TRANSIT)
-        await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
+        await callback.message.edit_text(f"📦 Buyurtma #{order_id}\n\nSavol: Transitdan narsa oldingizmi?", reply_markup=kb.get_transit_kb(order_id))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.callback_query(F.data.startswith("tr_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     order_id = callback.data.split("_")[-1]
     if not order_id or order_id == "None":
         await callback.answer("Buyurtma ID topilmadi", show_alert=True)
@@ -125,7 +140,9 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
         "transit_status": status
     })
     await state.update_data(order_id=order_id, transit_status=status)
-    await callback.answer(f"Transit: {status}")
+    await state.set_state(DeliveryStates.LOADED_PHOTO)
+    await callback.message.edit_text(f"📦 Buyurtma #{order_id}\n\n📸 Yuk ortilgan rasmni yuboring")
+    asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.LOADED_PHOTO, F.photo | F.document)
 async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
@@ -138,12 +155,12 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("step_way_"))
 async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     order_id = callback.data.split("_")[-1]
-    if not order_id or order_id == "None":
-        order_id = (await state.get_data()).get('order_id')
     if not order_id or order_id == "None":
         await callback.answer("Buyurtma ID topilmadi", show_alert=True)
         return
+    await state.update_data(order_id=order_id)
     now = get_now().isoformat(); order = await asyncio.to_thread(get_order, order_id)
     if not order:
         await callback.answer("Buyurtma topilmadi", show_alert=True)
@@ -152,26 +169,24 @@ async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'YOLDA'))
     asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND (YOLDA)', order_id))
     await state.set_state(DeliveryStates.ARRIVED_CLIENT)
-    await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n**Manzilga yetib borgangizmi?**", reply_markup=kb.get_step_kb("🚚 Borib bo'ldim", f"step_arrived_{order_id}"))
+    await callback.message.edit_text(f"📦 Buyurtma #{order_id}\n\nManzilga yetib borgangizmi?", reply_markup=kb.get_step_kb("🚚 Borib bo'ldim", f"step_arrived_{order_id}"))
     asyncio.create_task(update_group_report(bot, order_id))
-    await callback.answer()
 
 @router.callback_query(F.data.startswith("step_arrived_"))
 async def step_arrived(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     order_id = callback.data.split("_")[-1]
-    if not order_id or order_id == "None":
-        order_id = (await state.get_data()).get('order_id')
     if not order_id or order_id == "None":
         await callback.answer("Buyurtma ID topilmadi", show_alert=True)
         return
+    await state.update_data(order_id=order_id)
     now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'arrived_at': now, 'current_status': 'MANZILDA'})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'MANZILDA'))
     await state.set_state(DeliveryStates.DELIVERED_LOC)
-    await callback.message.edit_text(f"✅ Manzilga yetib buldingiz.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**")
+    await callback.message.edit_text(f"✅ Manzilga yetib buldingiz.\n\n📍 Yetkazilgan joy lokatsiyasini yuboring")
     await callback.message.answer("📍 Lokatsiyani yuboring:", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
     asyncio.create_task(update_group_report(bot, order_id))
-    await callback.answer()
 
 @router.message(DeliveryStates.ACT_PHOTO, F.photo | F.document)
 async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
@@ -192,12 +207,12 @@ async def handle_delivered_location(message: Message, state: FSMContext, bot: Bo
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     order_id = callback.data.split("_")[-1]
-    if not order_id or order_id == "None":
-        order_id = (await state.get_data()).get('order_id')
     if not order_id or order_id == "None":
         await callback.answer("Buyurtma ID topilmadi", show_alert=True)
         return
+    await state.update_data(order_id=order_id)
     now = get_now().isoformat()
     order = await asyncio.to_thread(get_order, order_id)
     if not order:
