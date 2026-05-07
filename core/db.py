@@ -43,8 +43,20 @@ def get_order(order_id: str):
 
 def update_order(order_id: str, data: dict):
     try:
-        if not supabase: return
-        supabase.table('orders').update(data).eq('order_id', order_id).execute()
+        if not supabase or not data: return
+        existing = get_order(order_id)
+        if not existing:
+            logger.warning(f"Order {order_id} not found for update")
+            return
+        valid_data = {}
+        for key, value in data.items():
+            if key in existing:
+                valid_data[key] = value
+            else:
+                logger.warning(f"Skipping update field '{key}' for order {order_id}: column does not exist")
+        if not valid_data:
+            return
+        supabase.table('orders').update(valid_data).eq('order_id', order_id).execute()
     except Exception as e:
         logger.error(f"Error updating order {order_id}: {e}")
 

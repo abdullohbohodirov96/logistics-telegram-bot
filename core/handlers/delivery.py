@@ -59,16 +59,16 @@ def build_interim_report(order):
     d_total = format_duration_detailed(get_seconds_diff(order.get('accepted_at'), now_iso))
     
     text = (
-        f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
-        f"📍 **Manzil:** {order.get('address', '-')}\n"
-        f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-        f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
+        f"🚚 LOGISTIKA HISOBOTI #{order_id}\n"
+        f"📍 Manzil: {order.get('address', '-')}\n"
+        f"📦 Yuk: {order.get('cargo', '-')}\n"
+        f"👤 Haydovchi: {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🏗 **Yuklash:**\n"
+        f"🏗 Yuklash:\n"
         f"🧱 A: {a_icon} ({d_a})  📦 B: {b_icon} ({d_b})  🏗 C: {c_icon} ({d_c})  🚚 D: {d_icon} ({d_d})  🚛 Transit: {tr_icon} {get_status_label(order.get('transit_status'))} ({d_tr})\n\n"
-        f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
-        f"⏰ **Boshlandi:** {acc_time}\n"
-        f"⏳ **Ketgan vaqt:** {d_total}\n"
+        f"📊 Status: {order.get('current_status', 'NEW')}\n"
+        f"⏰ Boshlandi: {acc_time}\n"
+        f"⏳ Ketgan vaqt: {d_total}\n"
     )
     return text
 
@@ -81,9 +81,9 @@ async def update_group_report(bot: Bot, order_id: str):
     try:
         msg_id = order.get('group_message_id')
         if msg_id:
-            await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="Markdown")
+            await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text)
         else:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
+            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
             asyncio.create_task(asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)}))
     except Exception as e: logger.error(f"Group report error: {e}")
 
@@ -271,22 +271,22 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
         
         grp_text = (
-            f"🚚 **LOGISTIKA YAKUNI #{order_id}**\n\n"
-            f"📍 **Manzil:** {order.get('address', '-')}\n"
-            f"📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n"
-            f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-            f"📝 **Izoh:** {order.get('comment', '-')}\n\n"
-            f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n"
-            f"🚘 **Mashina:** {order.get('car_number', '-')}\n\n"
-            f"🏗 **Yuklash:**\n"
+            f"🚚 LOGISTIKA YAKUNI #{order_id}\n\n"
+            f"📍 Manzil: {order.get('address', '-')}\n"
+            f"📍 Yetkazilgan lokatsiya: https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}\n\n"
+            f"📦 Yuk: {order.get('cargo', '-')}\n"
+            f"📝 Izoh: {order.get('comment', '-')}\n\n"
+            f"👤 Haydovchi: {order.get('driver_name', '-')}\n"
+            f"🚘 Mashina: {order.get('car_number', '-')}\n\n"
+            f"🏗 Yuklash:\n"
             f"🧱 A: {a_i}  📦 B: {b_i}  🏗 C: {c_i}  🚚 D: {d_i}  🚛 Transit: {get_status_label(order.get('transit_status'))}\n\n"
-            f"⏰ **Boshlandi:** {parse_dt(acc_at).strftime('%H:%M')}\n"
-            f"🏁 **Tugadi:** {parse_dt(fin_at).strftime('%H:%M')}\n"
-            f"⏳ **Ketgan vaqt:** {d_total}\n\n"
-            f"📊 **Status:** YAKUNLANDI\n"
-            f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}"
+            f"⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M')}\n"
+            f"🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n"
+            f"⏳ Ketgan vaqt: {d_total}\n\n"
+            f"📊 Status: YAKUNLANDI\n"
+            f"🟢 Mashina bo'shadi: {order.get('car_number', '-')}"
         )
-        await bot.send_message(chat_id=GROUP_CHAT_ID, text=grp_text, parse_mode="Markdown", disable_web_page_preview=False)
+        await bot.send_message(chat_id=GROUP_CHAT_ID, text=grp_text, disable_web_page_preview=False)
         
         # 4. Send Media Group
         media = []
