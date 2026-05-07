@@ -21,6 +21,13 @@ def get_status_icon(status):
     if status in ["ORTMADI", "OLMADI"]: return "❌"
     return "⚪️"
 
+def get_status_label(status):
+    if status in ["ORTDI", "OLDI"]:
+        return "✅ HA"
+    if status in ["ORTMADI", "OLMADI"]:
+        return "❌ YO'Q"
+    return "⏳ Kutilmoqda"
+
 def get_seconds_diff(start_iso, end_iso):
     if not start_iso or not end_iso: return None
     try:
@@ -58,7 +65,7 @@ def build_interim_report(order):
         f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🏗 **Yuklash:**\n"
-        f"A: {a_icon} ({d_a})  B: {b_icon} ({d_b})  C: {c_icon} ({d_c})  D: {d_icon} ({d_d})  Transit: {tr_icon} ({d_tr})\n\n"
+        f"🧱 A: {a_icon} ({d_a})  📦 B: {b_icon} ({d_b})  🏗 C: {c_icon} ({d_c})  🚚 D: {d_icon} ({d_d})  🚛 Transit: {tr_icon} {get_status_label(order.get('transit_status'))} ({d_tr})\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
         f"⏰ **Boshlandi:** {acc_time}\n"
         f"⏳ **Ketgan vaqt:** {d_total}\n"
@@ -117,7 +124,10 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     status = "OLDI" if callback.data.startswith("tr_oldi_") else "OLMADI"
     await asyncio.to_thread(update_order, order_id, {'transit_at': now, 'transit_status': status})
     await state.set_state(DeliveryStates.LOADED_PHOTO)
-    await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+    if status == "OLDI":
+        await callback.message.edit_text(f"🚛✨ Transit: ✅ HA (OLDI) belgilandi\n\n📸 Yuk ortilgan rasmni yuboring")
+    else:
+        await callback.message.edit_text(f"🚛❌ Transit: YO'Q (OLMADI) belgilandi\n\n📸 Yuk ortilgan rasmni yuboring")
     asyncio.create_task(update_group_report(bot, order_id))
     await callback.answer()
 
@@ -226,11 +236,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         f"🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n"
         f"⏳ Umumiy vaqt: {d_total}\n\n"
         f"**Yuklash etaplari:**\n"
-        f"A-blok: {order.get('a_block_status','—')} | {d_a}\n"
-        f"B-blok: {order.get('b_block_status','—')} | {d_b}\n"
-        f"C-blok: {order.get('c_block_status','—')} | {d_c}\n"
-        f"D-blok: {order.get('d_block_status','—')} | {d_d}\n"
-        f"Transit: {order.get('transit_status','—')} | {d_tr}\n"
+        f"🧱 A-blok: {order.get('a_block_status','—')} | {d_a}\n"
+        f"📦 B-blok: {order.get('b_block_status','—')} | {d_b}\n"
+        f"🏗 C-blok: {order.get('c_block_status','—')} | {d_c}\n"
+        f"🚚 D-blok: {order.get('d_block_status','—')} | {d_d}\n"
+        f"🚛 Transit: {get_status_label(order.get('transit_status'))} | {d_tr}\n"
         f"Yuk rasmi: {d_yuk}\n\n"
         f"**Yetkazish etaplari:**\n"
         f"Yo'lga chiqish: {d_way}\n"
@@ -265,7 +275,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
             f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n"
             f"🚘 **Mashina:** {order.get('car_number', '-')}\n\n"
             f"🏗 **Yuklash:**\n"
-            f"A: {a_i}  B: {b_i}  C: {c_i}  D: {d_i}  Transit: {t_i}\n\n"
+            f"🧱 A: {a_i}  📦 B: {b_i}  🏗 C: {c_i}  🚚 D: {d_i}  🚛 Transit: {get_status_label(order.get('transit_status'))}\n\n"
             f"⏰ **Boshlandi:** {parse_dt(acc_at).strftime('%H:%M')}\n"
             f"🏁 **Tugadi:** {parse_dt(fin_at).strftime('%H:%M')}\n"
             f"⏳ **Ketgan vaqt:** {d_total}\n\n"

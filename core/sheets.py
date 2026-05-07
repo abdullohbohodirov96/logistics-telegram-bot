@@ -183,7 +183,7 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
         headers = values[0]
         idx_car = fuzzy_match_header(headers, ['car_number', 'moshina'])
         idx_status = fuzzy_match_header(headers, ['status', 'holat'])
-        idx_order = fuzzy_match_header(headers, ['current_order_id', 'buyurtma'])
+        idx_order = fuzzy_match_header(headers, ['current_order_id', 'order_id', 'buyurtma_id', 'buyurtma'])
         
         norm_target = normalize_car(car_number)
         row_num = -1
@@ -192,13 +192,24 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
                 row_num = i + 2
                 break
         if row_num != -1:
-            col_status = col_to_letter(idx_status) if idx_status != -1 else ""
-            col_order = col_to_letter(idx_order) if idx_order != -1 else ""
             data = []
-            if col_status: data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_status}{row_num}', 'values': [[status]]})
-            if col_order: data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_order}{row_num}', 'values': [[current_order_id]]})
+            
+            # Always update status (D column)
+            if idx_status != -1:
+                col_status = col_to_letter(idx_status)
+                data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_status}{row_num}', 'values': [[status]]})
+            
+            # Update current_order_id (E column) - clear if status is BO'SH, set if BAND
+            if idx_order != -1:
+                col_order = col_to_letter(idx_order)
+                order_value = current_order_id if status.startswith("BAND") and current_order_id else ""
+                data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_order}{row_num}', 'values': [[order_value]]})
+            elif status.startswith("BAND") and current_order_id:
+                logger.warning(f"current_order_id column not found in drivers sheet. Headers: {headers}. Status updated but order_id not stored.")
+            
             if data:
                 sheets.values().batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': data}).execute()
+                logger.info(f"Driver {car_number} status updated to {status}, order_id: {current_order_id}")
     except Exception as e:
         logger.error(f"Error updating driver status: {e}")
 
