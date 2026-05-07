@@ -23,8 +23,14 @@ def get_sheets_service():
             creds.refresh(Request())
         else:
             if not os.path.exists('credentials.json'):
-                logger.error("credentials.json not found!")
-                return None
+                env_creds = os.getenv('GOOGLE_CREDENTIALS_JSON')
+                if env_creds:
+                    logger.info("Creating credentials.json from environment variable.")
+                    with open('credentials.json', 'w') as f:
+                        f.write(env_creds)
+                else:
+                    logger.error("credentials.json not found and GOOGLE_CREDENTIALS_JSON env not set!")
+                    return None
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.pickle', 'wb') as token:
