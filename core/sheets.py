@@ -1,300 +1,152 @@
 import logging
-import re
+import os
+import pickle
+import json
 import asyncio
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from core.config import GOOGLE_SERVICE_ACCOUNT_INFO, GOOGLE_SHEET_ID, DRIVERS_SHEET_NAME, ORDERS_SHEET_NAME
-from core.cache import cache_get, cache_set
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from core.config import GOOGLE_SHEET_ID, ORDERS_SHEET_NAME, DRIVERS_SHEET_NAME
 
 logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
-_sheets_service = None
-
 def get_sheets_service():
-    global _sheets_service
-    if _sheets_service is not None:
-        return _sheets_service
-    if not GOOGLE_SERVICE_ACCOUNT_INFO or not GOOGLE_SHEET_ID:
-        logger.error("Google Sheets credentials not configured.")
-        return None
-    try:
-        creds = service_account.Credentials.from_service_account_info(
-            GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-        service = build('sheets', 'v4', credentials=creds)
-        _sheets_service = service.spreadsheets()
-        return _sheets_service
-    except Exception as e:
-        logger.error(f"Error initializing Sheets service: {e}")
-        return None
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists('credentials.json'):
+                logger.error("credentials.json not found!")
+                return None
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
 
-def normalize_car(val: str):
-    if not val: return ""
-    val = str(val).upper().strip()
-    replacements = {'А':'A','В':'B','Е':'E','К':'K','М':'M','Н':'H','О':'O','Р':'P','С':'C','Т':'T','Х':'X'}
-    for cyr, lat in replacements.items(): val = val.replace(cyr, lat)
-    return re.sub(r'[^A-Z0-9]', '', val)
-
-def clean_tid(val: str):
-    if not val: return None
-    clean = re.sub(r'[^0-9]', '', str(val).strip())
-    return int(clean) if clean.isdigit() else None
+    return build('sheets', 'v4', credentials=creds).spreadsheets()
 
 def fuzzy_match_header(headers, target_names):
-    """Find column index by trying multiple possible names."""
-    norm_headers = [re.sub(r'[^a-z0-9]', '', h.lower()) for h in headers]
-    for target in target_names:
-        norm_target = re.sub(r'[^a-z0-9]', '', target.lower())
-        if norm_target in norm_headers:
-            return norm_headers.index(norm_target)
+    """Find column index by multiple possible header names (case insensitive)."""
+    for i, h in enumerate(headers):
+        clean_h = str(h).strip().lower()
+        if clean_h in [t.lower() for t in target_names]:
+            return i
     return -1
 
-def get_drivers():
-    # Try cache first (120s TTL)
-    cached = cache_get('drivers_cache', ttl_seconds=120)
-    if cached is not None:
-        logger.debug("Returning cached get_drivers result")
-        return cached
-    
-    sheets = get_sheets_service()
-    if not sheets: return {}
-    try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z100').execute()
-        values = result.get('values', [])
-        if not values: return {}
-        
-        headers = values[0]
-        logger.info(f"📊 DIQQAT! Drivers listi shapkasi: {headers}")
-        
-        idx_car = fuzzy_match_header(headers, ['car_number', 'moshina', 'nomer', 'car'])
-        idx_name = fuzzy_match_header(headers, ['driver_name', 'ism', 'haydovchi', 'name'])
-        idx_tid = fuzzy_match_header(headers, ['driver_user_id', 'tg_id', 'telegram_id', 'id'])
-        
-        if idx_car == -1 or idx_tid == -1:
-            logger.error(f"❌ XATO: Kerakli ustunlar topilmadi. Car idx: {idx_car}, TID idx: {idx_tid}")
-            return {}
-            
-        drivers = {}
-        for row in values[1:]:
-            if len(row) <= max(idx_car, idx_tid): continue
-            norm_car = normalize_car(row[idx_car])
-            tid = clean_tid(row[idx_tid])
-            if norm_car and tid:
-                drivers[norm_car] = {
-                    'driver_name': row[idx_name].strip() if idx_name != -1 and len(row) > idx_name else "Haydovchi",
-                    'telegram_id': tid
-                }
-        
-        logger.info(f"✅ Topilgan haydovchilar moshinalari: {list(drivers.keys())}")
-        cache_set('drivers_cache', drivers)
-        return drivers
-    except Exception as e:
-        logger.error(f"Error in get_drivers: {e}")
-        return {}
+def col_to_letter(col_index):
+    """Convert 0-based column index to Excel-style column letter (A, B, ..., AA, AB)."""
+    letter = ''
+    col_index += 1
+    while col_index > 0:
+        col_index, remainder = divmod(col_index - 1, 26)
+        letter = chr(65 + remainder) + letter
+    return letter
 
 def get_new_orders():
     sheets = get_sheets_service()
     if not sheets: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A1:Z500').execute()
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:Z').execute()
         values = result.get('values', [])
-        if not values: return []
-        
+        if not values or len(values) < 2: return []
+
         headers = values[0]
-        idx_id = fuzzy_match_header(headers, ['order_id', 'id', 'nomer'])
-        idx_car = fuzzy_match_header(headers, ['car_number', 'moshina', 'car'])
-        idx_status = fuzzy_match_header(headers, ['status', 'holat'])
-        
-        # Other fields for data
-        idx_addr = fuzzy_match_header(headers, ['address', 'manzil'])
-        idx_cargo = fuzzy_match_header(headers, ['cargo', 'yuk'])
-        idx_comment = fuzzy_match_header(headers, ['comment', 'izoh'])
-        
+        id_idx = fuzzy_match_header(headers, ['id', 'order_id', 'id_order'])
+        car_idx = fuzzy_match_header(headers, ['car', 'car_number', 'mashina', 'moshina'])
+        addr_idx = fuzzy_match_header(headers, ['address', 'manzil'])
+        cargo_idx = fuzzy_match_header(headers, ['cargo', 'yuk'])
+        comment_idx = fuzzy_match_header(headers, ['comment', 'izoh'])
+        status_idx = fuzzy_match_header(headers, ['status', 'holat'])
+
         new_orders = []
-        for i, row in enumerate(values[1:]):
-            if not any(row): continue
-            
-            raw_status = row[idx_status].strip().upper() if idx_status != -1 and len(row) > idx_status else ""
-            # Normalize status: replace curly quotes with straight ones
-            status = raw_status.replace('‘', "'").replace('’', "'")
-            
-            # Get order_id and car_number
-            order_id = row[idx_id].strip() if idx_id != -1 and len(row) > idx_id else ""
-            car_num = normalize_car(row[idx_car]) if idx_car != -1 and len(row) > idx_car else ""
-            
-            # Process ONLY if status is 'SEND'
-            if status == 'SEND' and order_id and car_num:
+        for i, row in enumerate(values[1:], start=2):
+            if len(row) <= status_idx or not row[status_idx] or str(row[status_idx]).strip() == "":
+                order_id = row[id_idx] if len(row) > id_idx else f"row_{i}"
+                if not order_id: continue
+                
                 new_orders.append({
-                    'row_index': i + 2,
-                    'order_id': order_id,
-                    'car_number': car_num,
-                    'address': row[idx_addr].strip() if idx_addr != -1 and len(row) > idx_addr else "",
-                    'cargo': row[idx_cargo].strip() if idx_cargo != -1 and len(row) > idx_cargo else "",
-                    'comment': row[idx_comment].strip() if idx_comment != -1 and len(row) > idx_comment else ""
+                    'row_index': i,
+                    'order_id': str(order_id).strip(),
+                    'car_number': str(row[car_idx]).strip().upper() if len(row) > car_idx else "",
+                    'address': row[addr_idx] if len(row) > addr_idx else "-",
+                    'cargo': row[cargo_idx] if len(row) > cargo_idx else "-",
+                    'comment': row[comment_idx] if len(row) > comment_idx else "",
                 })
         return new_orders
     except Exception as e:
-        logger.error(f"Error in get_new_orders: {e}")
+        logger.error(f"Error fetching orders from Sheets: {e}")
         return []
 
-def col_to_letter(n):
-    """Convert column index (0-based) to Excel-style letter (A, B, C, ..., AA, AB, ...)."""
-    string = ""
-    n += 1
-    while n > 0:
-        n, remainder = divmod(n - 1, 26)
-        string = chr(65 + remainder) + string
-    return string
+def get_drivers():
+    """Returns a dict of car_number -> driver_info from Drivers sheet."""
+    sheets = get_sheets_service()
+    if not sheets: return {}
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
+        values = result.get('values', [])
+        if not values or len(values) < 2: 
+            logger.warning("Drivers sheet is empty or only has headers.")
+            return {}
 
-def update_order_status(row_index: int, status: str):
+        headers = [str(h).strip().lower() for h in values[0]]
+        drivers = {}
+        for row in values[1:]:
+            if len(row) < 3: continue
+            car_raw = str(row[0]).strip().upper()
+            if not car_raw: continue
+            
+            drivers[car_raw] = {
+                'driver_name': row[1] if len(row) > 1 else "Noma'lum",
+                'telegram_id': row[2] if len(row) > 2 else None,
+                'status': row[3] if len(row) > 3 else "IDLE",
+                'row_index': None
+            }
+        
+        logger.info(f"Loaded drivers from sheet: {list(drivers.keys())}")
+        return drivers
+    except Exception as e:
+        logger.error(f"Error fetching drivers from Sheets: {e}")
+        return {}
+
+def update_order_status(row_index, status):
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        # Try cache first for status column index (600s TTL)
-        status_col_idx = cache_get('orders_status_col_idx', ttl_seconds=600)
-        if status_col_idx is None:
-            result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
-            headers = result.get('values', [[]])[0]
-            status_col_idx = fuzzy_match_header(headers, ['status', 'holat'])
-            if status_col_idx == -1:
-                logger.error(f"Status column not found. Headers: {headers}")
-                return
-            cache_set('orders_status_col_idx', status_col_idx)
-        
-        col_letter = col_to_letter(status_col_idx)
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A1:Z1').execute()
+        headers = result.get('values', [[]])[0]
+        status_idx = fuzzy_match_header(headers, ['status', 'holat'])
+        if status_idx == -1: return
+
+        col_letter = col_to_letter(status_idx)
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
             valueInputOption='USER_ENTERED',
             body={'values': [[status]]}
         ).execute()
-        logger.info(f"Sheets status updated to {status} at row {row_index} column {col_letter}")
+        logger.info(f"Sheets: Row {row_index} status updated to {status}")
     except Exception as e:
-        logger.error(f"Error updating order status: {e}")
-
-def update_driver_status_sheet(car_number: str, status: str, current_order_id: str = ""):
-    sheets = get_sheets_service()
-    if not sheets: return
-    try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z100').execute()
-        values = result.get('values', [])
-        if not values: return
-        headers = values[0]
-        idx_car = fuzzy_match_header(headers, ['car_number', 'moshina'])
-        idx_status = fuzzy_match_header(headers, ['status', 'holat'])
-        idx_order = fuzzy_match_header(headers, ['current_order_id', 'order_id', 'buyurtma_id', 'buyurtma'])
-        
-        norm_target = normalize_car(car_number)
-        row_num = -1
-        for i, row in enumerate(values[1:]):
-            if len(row) > idx_car and normalize_car(row[idx_car]) == norm_target:
-                row_num = i + 2
-                break
-        if row_num != -1:
-            data = []
-            
-            # Always update status (D column)
-            if idx_status != -1:
-                col_status = col_to_letter(idx_status)
-                data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_status}{row_num}', 'values': [[status]]})
-            
-            # Update current_order_id (E column) - clear if status is BO'SH, set if BAND
-            if idx_order != -1:
-                col_order = col_to_letter(idx_order)
-                order_value = current_order_id if status.startswith("BAND") and current_order_id else ""
-                data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_order}{row_num}', 'values': [[order_value]]})
-            elif status.startswith("BAND") and current_order_id:
-                logger.warning(f"current_order_id column not found in drivers sheet. Headers: {headers}. Status updated but order_id not stored.")
-            
-            if data:
-                sheets.values().batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': data}).execute()
-                logger.info(f"Driver {car_number} status updated to {status}, order_id: {current_order_id}")
-    except Exception as e:
-        logger.error(f"Error updating driver status: {e}")
-
-def get_driver_by_tid(tid: int):
-    sheets = get_sheets_service()
-    if not sheets: return None
-    try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z100').execute()
-        values = result.get('values', [])
-        if not values: return None
-        headers = values[0]
-        idx_car = fuzzy_match_header(headers, ['car_number', 'moshina'])
-        idx_name = fuzzy_match_header(headers, ['driver_name', 'ism'])
-        idx_tid = fuzzy_match_header(headers, ['driver_user_id', 'id'])
-        idx_status = fuzzy_match_header(headers, ['status', 'holat'])
-        idx_order = fuzzy_match_header(headers, ['current_order_id', 'buyurtma'])
-        
-        for row in values[1:]:
-            if len(row) > idx_tid and clean_tid(row[idx_tid]) == tid:
-                return {
-                    'car_number': row[idx_car].strip() if idx_car != -1 and len(row) > idx_car else '',
-                    'driver_name': row[idx_name].strip() if idx_name != -1 and len(row) > idx_name else '',
-                    'status': row[idx_status].strip() if idx_status != -1 and len(row) > idx_status else 'BO\'SH',
-                    'current_order_id': row[idx_order].strip() if idx_order != -1 and len(row) > idx_order else ''
-                }
-        return None
-    except Exception: return None
-
-def get_drivers_status_list():
-    drivers = get_drivers() # This logs headers
-    # Simplified version for the UI list
-    sheets = get_sheets_service()
-    if not sheets: return []
-    try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A1:Z100').execute()
-        values = result.get('values', [])
-        headers = values[0]
-        idx_car = fuzzy_match_header(headers, ['car_number', 'moshina'])
-        idx_name = fuzzy_match_header(headers, ['driver_name', 'ism'])
-        idx_status = fuzzy_match_header(headers, ['status', 'holat'])
-        idx_order = fuzzy_match_header(headers, ['current_order_id', 'buyurtma'])
-        
-        res = []
-        for row in values[1:]:
-            if len(row) <= max(idx_car, idx_status): continue
-            res.append({
-                'car_number': row[idx_car].strip() if idx_car != -1 else '?',
-                'driver_name': row[idx_name].strip() if idx_name != -1 else '?',
-                'status': row[idx_status].strip() if idx_status != -1 else 'BO\'SH',
-                'order_id': row[idx_order].strip() if idx_order != -1 else ''
-            })
-        return res
-    except: return []
-
-def get_all_drivers_list():
-    drivers = get_drivers()
-    return [(v['driver_name'], str(v['telegram_id'])) for v in drivers.values()]
-
-def get_all_cars_list():
-    drivers = get_drivers()
-    return sorted(list(drivers.keys()))
+        logger.error(f"Error updating Sheets status: {e}")
 
 def find_order_row(order_id: str) -> int:
-    """Find the row index (1-based) for a given order_id."""
-    # Try cache first
-    cache_key = f'order_row_{order_id}'
-    cached_row = cache_get(cache_key, ttl_seconds=600)
-    if cached_row is not None:
-        logger.debug(f"Returning cached row for order {order_id}")
-        return cached_row
-    
     sheets = get_sheets_service()
     if not sheets: return -1
     try:
         result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:Z').execute()
         values = result.get('values', [])
         if not values: return -1
-        
         headers = values[0]
         id_idx = fuzzy_match_header(headers, ['id', 'order_id', 'id_order'])
         if id_idx == -1: return -1
-        
         for i, row in enumerate(values[1:], start=2):
             if len(row) > id_idx and str(row[id_idx]).strip() == str(order_id).strip():
-                cache_set(cache_key, i)
                 return i
         return -1
     except Exception as e:
@@ -302,9 +154,55 @@ def find_order_row(order_id: str) -> int:
         return -1
 
 def update_order_status_by_order_id(order_id: str, status: str):
-    """Finds row by order_id and updates status in Sheets."""
     row_index = find_order_row(order_id)
     if row_index != -1:
         update_order_status(row_index, status)
     else:
         logger.error(f"Could not update Sheets status for {order_id}: Row not found.")
+
+def update_driver_status_sheet(car_number, status, order_id=""):
+    """Update status and current_order_id in Drivers sheet."""
+    sheets = get_sheets_service()
+    if not sheets: return
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:A').execute()
+        values = result.get('values', [])
+        if not values: return
+        
+        target_car = str(car_number).strip().upper()
+        row_idx = -1
+        for i, row in enumerate(values):
+            if row and str(row[0]).strip().upper() == target_car:
+                row_idx = i + 1
+                break
+        
+        if row_idx != -1:
+            sheets.values().update(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f'{DRIVERS_SHEET_NAME}!D{row_idx}:E{row_idx}',
+                valueInputOption='USER_ENTERED',
+                body={'values': [[status, order_id]]}
+            ).execute()
+            logger.info(f"Driver {target_car} status updated to {status}")
+    except Exception as e:
+        logger.error(f"Error updating driver status: {e}")
+
+def get_driver_by_tid(tid):
+    sheets = get_sheets_service()
+    if not sheets: return None
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
+        values = result.get('values', [])
+        if not values: return None
+        for row in values[1:]:
+            if len(row) > 2 and str(row[2]) == str(tid):
+                return {
+                    'car_number': row[0],
+                    'driver_name': row[1],
+                    'status': row[3] if len(row) > 3 else "",
+                    'current_order_id': row[4] if len(row) > 4 else ""
+                }
+        return None
+    except Exception as e:
+        logger.error(f"Error getting driver by tid: {e}")
+        return None
