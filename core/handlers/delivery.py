@@ -40,6 +40,17 @@ def build_interim_report(order):
     acc_at = parse_dt(order.get('accepted_at'))
     acc_time = acc_at.strftime('%H:%M') if acc_at else "—"
     
+    # Calculate stage durations for interim report
+    now_iso = get_now().isoformat()
+    d_a = format_duration_detailed(get_seconds_diff(order.get('accepted_at'), order.get('a_block_at')))
+    d_b = format_duration_detailed(get_seconds_diff(order.get('a_block_at'), order.get('b_block_at')))
+    d_c = format_duration_detailed(get_seconds_diff(order.get('b_block_at'), order.get('c_block_at')))
+    d_d = format_duration_detailed(get_seconds_diff(order.get('c_block_at'), order.get('d_block_at')))
+    d_tr = format_duration_detailed(get_seconds_diff(order.get('d_block_at'), order.get('transit_at')))
+    
+    # Calculate total elapsed time
+    d_total = format_duration_detailed(get_seconds_diff(order.get('accepted_at'), now_iso))
+    
     text = (
         f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
         f"📍 **Manzil:** {order.get('address', '-')}\n"
@@ -47,9 +58,10 @@ def build_interim_report(order):
         f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🏗 **Yuklash:**\n"
-        f"A: {a_icon}  B: {b_icon}  C: {c_icon}  D: {d_icon}  Transit: {tr_icon}\n\n"
+        f"A: {a_icon} ({d_a})  B: {b_icon} ({d_b})  C: {c_icon} ({d_c})  D: {d_icon} ({d_d})  Transit: {tr_icon} ({d_tr})\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
         f"⏰ **Boshlandi:** {acc_time}\n"
+        f"⏳ **Ketgan vaqt:** {d_total}\n"
     )
     return text
 
@@ -117,8 +129,17 @@ async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
     asyncio.create_task(asyncio.to_thread(update_order, order_id, {'on_way_at': now, 'current_status': 'YOLDA'}))
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'YOLDA'))
     asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND (YOLDA)', order_id))
-    await state.set_state(DeliveryStates.ACT_PHOTO)
-    await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nMijoz manziliga yetib borgach akt rasmini yuboring:\n\n📄 **Qo'l qo'ydirilgan akt rasmini yuboring**")
+    await state.set_state(DeliveryStates.ARRIVED_CLIENT)
+    await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n**Manzilga yetib borgangizmi?**", reply_markup=kb.get_step_kb("🚚 Borib bo'ldim", f"step_arrived_{order_id}"))
+    asyncio.create_task(update_group_report(bot, order_id))
+
+@router.callback_query(F.data.startswith("step_arrived_"))
+async def step_arrived(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
+    await asyncio.to_thread(update_order, order_id, {'arrived_at': now, 'current_status': 'MANZILDA'})
+    asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'MANZILDA'))
+    await state.set_state(DeliveryStates.DELIVERED_LOC)
+    await callback.message.edit_text(f"✅ Manzilga yetib buldingiz.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.ACT_PHOTO, F.photo | F.document)
@@ -126,16 +147,16 @@ async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
-    await state.set_state(DeliveryStates.DELIVERED_LOC)
-    await message.answer(f"✅ Akt qabul qilindi.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    await state.set_state(DeliveryStates.WAITING_FINISH)
+    await message.answer(f"✅ Akt rasmi qabul qilindi.\n\nBuyurtmani yakunlash uchun tugmani bosing:", reply_markup=kb.get_step_kb("✅ Buyurtmani yakunlash", f"final_done_{order_id}"))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.DELIVERED_LOC, F.location)
 async def handle_delivered_location(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'delivered_lat': message.location.latitude, 'delivered_lng': message.location.longitude, 'delivered_location_at': now})
-    await state.set_state(DeliveryStates.WAITING_FINISH)
-    await message.answer(f"✅ Lokatsiya qabul qilindi.\n\nBuyurtmani yakunlash uchun tugmani bosing:", reply_markup=kb.get_step_kb("✅ Buyurtmani yakunlash", f"final_done_{order_id}"))
+    await state.set_state(DeliveryStates.ACT_PHOTO)
+    await message.answer(f"✅ Lokatsiya qabul qilindi.\n\n📄 **Qo'l qo'ydirilgan akt rasmini yuboring**")
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.callback_query(F.data.startswith("final_done_"))
@@ -161,8 +182,9 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     d_tr = format_duration_detailed(get_seconds_diff(order.get('d_block_at'), order.get('transit_at')))
     d_yuk = format_duration_detailed(get_seconds_diff(order.get('transit_at'), order.get('loaded_photo_at')))
     d_way = format_duration_detailed(get_seconds_diff(order.get('loaded_photo_at'), order.get('on_way_at')))
-    d_act = format_duration_detailed(get_seconds_diff(order.get('on_way_at'), order.get('act_photo_at')))
-    d_loc = format_duration_detailed(get_seconds_diff(order.get('act_photo_at'), order.get('delivered_location_at')))
+    d_arrived = format_duration_detailed(get_seconds_diff(order.get('on_way_at'), order.get('arrived_at')))
+    d_loc = format_duration_detailed(get_seconds_diff(order.get('arrived_at'), order.get('delivered_location_at')))
+    d_act = format_duration_detailed(get_seconds_diff(order.get('delivered_location_at'), order.get('act_photo_at')))
 
     drv_msg = (
         f"✅ **Buyurtma yakunlandi**\n\n"
@@ -170,16 +192,18 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         f"⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M')}\n"
         f"🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n"
         f"⏳ Umumiy vaqt: {d_total}\n\n"
-        f"**Etaplar:**\n"
+        f"**Yuklash etaplari:**\n"
         f"A-blok: {order.get('a_block_status','—')} | {d_a}\n"
         f"B-blok: {order.get('b_block_status','—')} | {d_b}\n"
         f"C-blok: {order.get('c_block_status','—')} | {d_c}\n"
         f"D-blok: {order.get('d_block_status','—')} | {d_d}\n"
         f"Transit: {order.get('transit_status','—')} | {d_tr}\n"
-        f"Yuk rasmi: {d_yuk}\n"
+        f"Yuk rasmi: {d_yuk}\n\n"
+        f"**Yetkazish etaplari:**\n"
         f"Yo'lga chiqish: {d_way}\n"
-        f"Akt rasmi: {d_act}\n"
+        f"Manzilga borish: {d_arrived}\n"
         f"Lokatsiya: {d_loc}\n"
+        f"Akt rasmi: {d_act}\n"
     )
     await callback.message.edit_text(drv_msg, parse_mode="Markdown")
     

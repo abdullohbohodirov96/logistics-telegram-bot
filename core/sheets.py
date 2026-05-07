@@ -51,6 +51,12 @@ def fuzzy_match_header(headers, target_names):
     return -1
 
 def get_drivers():
+    # Try cache first (120s TTL)
+    cached = cache_get('drivers_cache', ttl_seconds=120)
+    if cached is not None:
+        logger.debug("Returning cached get_drivers result")
+        return cached
+    
     sheets = get_sheets_service()
     if not sheets: return {}
     try:
@@ -81,6 +87,7 @@ def get_drivers():
                 }
         
         logger.info(f"✅ Topilgan haydovchilar moshinalari: {list(drivers.keys())}")
+        cache_set('drivers_cache', drivers)
         return drivers
     except Exception as e:
         logger.error(f"Error in get_drivers: {e}")
@@ -116,8 +123,8 @@ def get_new_orders():
             order_id = row[idx_id].strip() if idx_id != -1 and len(row) > idx_id else ""
             car_num = normalize_car(row[idx_car]) if idx_car != -1 and len(row) > idx_car else ""
             
-            # Process if status is empty, NEW, YANGI, or SEND
-            if status in ['', 'NEW', 'YANGI', 'SEND'] and order_id and car_num:
+            # Process ONLY if status is 'SEND'
+            if status == 'SEND' and order_id and car_num:
                 new_orders.append({
                     'row_index': i + 2,
                     'order_id': order_id,
@@ -144,14 +151,18 @@ def update_order_status(row_index: int, status: str):
     sheets = get_sheets_service()
     if not sheets: return
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
-        headers = result.get('values', [[]])[0]
-        idx = fuzzy_match_header(headers, ['status', 'holat'])
-        if idx == -1: 
-            logger.error(f"Status column not found. Headers: {headers}")
-            return
-            
-        col_letter = col_to_letter(idx)
+        # Try cache first for status column index (600s TTL)
+        status_col_idx = cache_get('orders_status_col_idx', ttl_seconds=600)
+        if status_col_idx is None:
+            result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!1:1').execute()
+            headers = result.get('values', [[]])[0]
+            status_col_idx = fuzzy_match_header(headers, ['status', 'holat'])
+            if status_col_idx == -1:
+                logger.error(f"Status column not found. Headers: {headers}")
+                return
+            cache_set('orders_status_col_idx', status_col_idx)
+        
+        col_letter = col_to_letter(status_col_idx)
         sheets.values().update(
             spreadsheetId=GOOGLE_SHEET_ID,
             range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
@@ -181,8 +192,8 @@ def update_driver_status_sheet(car_number: str, status: str, current_order_id: s
                 row_num = i + 2
                 break
         if row_num != -1:
-            col_status = chr(ord('A') + idx_status) if idx_status != -1 else ""
-            col_order = chr(ord('A') + idx_order) if idx_order != -1 else ""
+            col_status = col_to_letter(idx_status) if idx_status != -1 else ""
+            col_order = col_to_letter(idx_order) if idx_order != -1 else ""
             data = []
             if col_status: data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_status}{row_num}', 'values': [[status]]})
             if col_order: data.append({'range': f'{DRIVERS_SHEET_NAME}!{col_order}{row_num}', 'values': [[current_order_id]]})
@@ -252,6 +263,13 @@ def get_all_cars_list():
 
 def find_order_row(order_id: str) -> int:
     """Find the row index (1-based) for a given order_id."""
+    # Try cache first
+    cache_key = f'order_row_{order_id}'
+    cached_row = cache_get(cache_key, ttl_seconds=600)
+    if cached_row is not None:
+        logger.debug(f"Returning cached row for order {order_id}")
+        return cached_row
+    
     sheets = get_sheets_service()
     if not sheets: return -1
     try:
@@ -265,6 +283,7 @@ def find_order_row(order_id: str) -> int:
         
         for i, row in enumerate(values[1:], start=2):
             if len(row) > id_idx and str(row[id_idx]).strip() == str(order_id).strip():
+                cache_set(cache_key, i)
                 return i
         return -1
     except Exception as e:
