@@ -1,42 +1,55 @@
 import logging
 import os
-import pickle
 import json
 import asyncio
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+import gspread
+from google.oauth2.service_account import Credentials
 from core.config import GOOGLE_SHEET_ID, ORDERS_SHEET_NAME, DRIVERS_SHEET_NAME
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+# Scopes required for Google Sheets and Drive
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+]
 
-def get_sheets_service():
-    creds = None
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+def get_gspread_client():
+    """Authenticates and returns a gspread client using Service Account."""
+    try:
+        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        creds_dict = None
+        
+        if creds_json:
+            logger.info("Using credentials from GOOGLE_CREDENTIALS_JSON environment variable.")
+            creds_dict = json.loads(creds_json)
+        elif os.path.exists('credentials.json'):
+            logger.info("Using credentials from local credentials.json file.")
+            with open('credentials.json', 'r') as f:
+                creds_dict = json.load(f)
         else:
-            if not os.path.exists('credentials.json'):
-                env_creds = os.getenv('GOOGLE_CREDENTIALS_JSON')
-                if env_creds:
-                    logger.info("Creating credentials.json from environment variable.")
-                    with open('credentials.json', 'w') as f:
-                        f.write(env_creds)
-                else:
-                    logger.error("credentials.json not found and GOOGLE_CREDENTIALS_JSON env not set!")
-                    return None
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+            logger.error("❌ No Google credentials found! Set GOOGLE_CREDENTIALS_JSON or provide credentials.json")
+            return None
 
-    return build('sheets', 'v4', credentials=creds).spreadsheets()
+        if not creds_dict:
+            logger.error("❌ Credentials dictionary is empty.")
+            return None
+
+        # Log credential info for debugging
+        logger.info(f"Credential Type: {creds_dict.get('type')}")
+        logger.info(f"Client Email: {creds_dict.get('client_email', 'NOT FOUND')}")
+
+        if creds_dict.get('type') != 'service_account':
+            logger.error("❌ ERROR: Provided credentials are NOT for a Service Account. "
+                         "Please use a Service Account JSON key.")
+            return None
+
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        logger.error(f"❌ Error authenticating Google Service Account: {e}")
+        return None
 
 def fuzzy_match_header(headers, target_names):
     """Find column index by multiple possible header names (case insensitive)."""
@@ -46,21 +59,14 @@ def fuzzy_match_header(headers, target_names):
             return i
     return -1
 
-def col_to_letter(col_index):
-    """Convert 0-based column index to Excel-style column letter (A, B, ..., AA, AB)."""
-    letter = ''
-    col_index += 1
-    while col_index > 0:
-        col_index, remainder = divmod(col_index - 1, 26)
-        letter = chr(65 + remainder) + letter
-    return letter
-
 def get_new_orders():
-    sheets = get_sheets_service()
-    if not sheets: return []
+    client = get_gspread_client()
+    if not client: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:Z').execute()
-        values = result.get('values', [])
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
+        values = worksheet.get_all_values()
+        
         if not values or len(values) < 2: return []
 
         headers = values[0]
@@ -73,14 +79,16 @@ def get_new_orders():
 
         new_orders = []
         for i, row in enumerate(values[1:], start=2):
-            if len(row) <= status_idx or not row[status_idx] or str(row[status_idx]).strip() == "":
-                order_id = row[id_idx] if len(row) > id_idx else f"row_{i}"
+            # Check if status column is empty
+            status_val = row[status_idx].strip() if len(row) > status_idx else ""
+            if not status_val:
+                order_id = row[id_idx].strip() if len(row) > id_idx else f"row_{i}"
                 if not order_id: continue
                 
                 new_orders.append({
                     'row_index': i,
-                    'order_id': str(order_id).strip(),
-                    'car_number': str(row[car_idx]).strip().upper() if len(row) > car_idx else "",
+                    'order_id': order_id,
+                    'car_number': row[car_idx].strip().upper() if len(row) > car_idx else "",
                     'address': row[addr_idx] if len(row) > addr_idx else "-",
                     'cargo': row[cargo_idx] if len(row) > cargo_idx else "-",
                     'comment': row[comment_idx] if len(row) > comment_idx else "",
@@ -92,16 +100,15 @@ def get_new_orders():
 
 def get_drivers():
     """Returns a dict of car_number -> driver_info from Drivers sheet."""
-    sheets = get_sheets_service()
-    if not sheets: return {}
+    client = get_gspread_client()
+    if not client: return {}
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
-        values = result.get('values', [])
-        if not values or len(values) < 2: 
-            logger.warning("Drivers sheet is empty or only has headers.")
-            return {}
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        values = worksheet.get_all_values()
+        
+        if not values or len(values) < 2: return {}
 
-        headers = [str(h).strip().lower() for h in values[0]]
         drivers = {}
         for row in values[1:]:
             if len(row) < 3: continue
@@ -111,8 +118,7 @@ def get_drivers():
             drivers[car_raw] = {
                 'driver_name': row[1] if len(row) > 1 else "Noma'lum",
                 'telegram_id': row[2] if len(row) > 2 else None,
-                'status': row[3] if len(row) > 3 else "IDLE",
-                'row_index': None
+                'status': row[3] if len(row) > 3 else "IDLE"
             }
         
         logger.info(f"Loaded drivers from sheet: {list(drivers.keys())}")
@@ -122,38 +128,29 @@ def get_drivers():
         return {}
 
 def update_order_status(row_index, status):
-    sheets = get_sheets_service()
-    if not sheets: return
+    client = get_gspread_client()
+    if not client: return
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A1:Z1').execute()
-        headers = result.get('values', [[]])[0]
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
+        headers = worksheet.row_values(1)
         status_idx = fuzzy_match_header(headers, ['status', 'holat'])
         if status_idx == -1: return
 
-        col_letter = col_to_letter(status_idx)
-        sheets.values().update(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f'{ORDERS_SHEET_NAME}!{col_letter}{row_index}',
-            valueInputOption='USER_ENTERED',
-            body={'values': [[status]]}
-        ).execute()
+        worksheet.update_cell(row_index, status_idx + 1, status)
         logger.info(f"Sheets: Row {row_index} status updated to {status}")
     except Exception as e:
         logger.error(f"Error updating Sheets status: {e}")
 
 def find_order_row(order_id: str) -> int:
-    sheets = get_sheets_service()
-    if not sheets: return -1
+    client = get_gspread_client()
+    if not client: return -1
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{ORDERS_SHEET_NAME}!A:Z').execute()
-        values = result.get('values', [])
-        if not values: return -1
-        headers = values[0]
-        id_idx = fuzzy_match_header(headers, ['id', 'order_id', 'id_order'])
-        if id_idx == -1: return -1
-        for i, row in enumerate(values[1:], start=2):
-            if len(row) > id_idx and str(row[id_idx]).strip() == str(order_id).strip():
-                return i
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
+        # Using find to search for the order_id in the entire worksheet
+        cell = worksheet.find(str(order_id).strip())
+        if cell: return cell.row
         return -1
     except Exception as e:
         logger.error(f"Error finding order row: {e}")
@@ -168,38 +165,30 @@ def update_order_status_by_order_id(order_id: str, status: str):
 
 def update_driver_status_sheet(car_number, status, order_id=""):
     """Update status and current_order_id in Drivers sheet."""
-    sheets = get_sheets_service()
-    if not sheets: return
+    client = get_gspread_client()
+    if not client: return
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:A').execute()
-        values = result.get('values', [])
-        if not values: return
-        
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
         target_car = str(car_number).strip().upper()
-        row_idx = -1
-        for i, row in enumerate(values):
-            if row and str(row[0]).strip().upper() == target_car:
-                row_idx = i + 1
-                break
         
-        if row_idx != -1:
-            sheets.values().update(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=f'{DRIVERS_SHEET_NAME}!D{row_idx}:E{row_idx}',
-                valueInputOption='USER_ENTERED',
-                body={'values': [[status, order_id]]}
-            ).execute()
+        cell = worksheet.find(target_car, in_column=1)
+        if cell:
+            # Column 4 is status, Column 5 is current_order_id
+            worksheet.update_cell(cell.row, 4, status)
+            worksheet.update_cell(cell.row, 5, order_id)
             logger.info(f"Driver {target_car} status updated to {status}")
     except Exception as e:
         logger.error(f"Error updating driver status: {e}")
 
 def get_driver_by_tid(tid):
-    sheets = get_sheets_service()
-    if not sheets: return None
+    client = get_gspread_client()
+    if not client: return None
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
-        values = result.get('values', [])
-        if not values: return None
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        values = worksheet.get_all_values()
+        
         for row in values[1:]:
             if len(row) > 2 and str(row[2]) == str(tid):
                 return {
@@ -213,20 +202,19 @@ def get_driver_by_tid(tid):
         logger.error(f"Error getting driver by tid: {e}")
         return None
 
-# --- Admin Panel Functions ---
-
 def get_drivers_status_list():
-    """Returns a list of dicts for admin panel status view."""
-    sheets = get_sheets_service()
-    if not sheets: return []
+    client = get_gspread_client()
+    if not client: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
-        values = result.get('values', [])
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        values = worksheet.get_all_values()
+        
         if not values or len(values) < 2: return []
         
         data = []
         for row in values[1:]:
-            if not row or len(row) < 1: continue
+            if not row: continue
             data.append({
                 'car_number': row[0].strip().upper() if len(row) > 0 else "-",
                 'driver_name': row[1] if len(row) > 1 else "-",
@@ -239,13 +227,12 @@ def get_drivers_status_list():
         return []
 
 def get_all_drivers_list():
-    """Returns a list of tuples (name, telegram_id) for history filtering."""
-    sheets = get_sheets_service()
-    if not sheets: return []
+    client = get_gspread_client()
+    if not client: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:C').execute()
-        values = result.get('values', [])
-        if not values or len(values) < 2: return []
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        values = worksheet.get_all_values()
         
         drivers = []
         for row in values[1:]:
@@ -257,13 +244,12 @@ def get_all_drivers_list():
         return []
 
 def get_all_cars_list():
-    """Returns a unique list of car numbers for history filtering."""
-    sheets = get_sheets_service()
-    if not sheets: return []
+    client = get_gspread_client()
+    if not client: return []
     try:
-        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:A').execute()
-        values = result.get('values', [])
-        if not values or len(values) < 2: return []
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        values = worksheet.get_all_values()
         
         cars = sorted(list(set([row[0].strip().upper() for row in values[1:] if row])))
         return cars
