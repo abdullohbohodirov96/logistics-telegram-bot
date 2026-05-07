@@ -11,18 +11,29 @@ PROCESSED_ORDERS = {}
 
 async def check_sheets_job(bot: Bot):
     try:
+        logger.info("🔍 Checking Google Sheets for new orders...")
         new_orders = await asyncio.to_thread(get_new_orders)
-        if not new_orders: return
         
+        if not new_orders:
+            logger.info("✅ No new orders (empty status rows) found in Sheets.")
+            return
+        
+        logger.info(f"📝 Found {len(new_orders)} new order rows to process.")
         drivers = await asyncio.to_thread(get_drivers)
         
         for order in new_orders:
             order_id = order['order_id']
-            if order_id in PROCESSED_ORDERS: continue
+            if order_id in PROCESSED_ORDERS:
+                logger.info(f"⏭ Skipping Order #{order_id} (already processed in this session).")
+                continue
                 
             try:
+                logger.info(f"⚙️ Processing Order #{order_id} for car {order['car_number']}...")
+                
+                # Ensure it's in DB
                 db_order = await asyncio.to_thread(get_order, order_id)
                 if not db_order:
+                    logger.info(f"📥 Creating Order #{order_id} in Supabase...")
                     await asyncio.to_thread(create_order, {
                         'order_id': order_id,
                         'car_number': order['car_number'],
@@ -38,7 +49,7 @@ async def check_sheets_job(bot: Bot):
                 if not driver:
                     available_cars = list(drivers.keys())
                     logger.error(f"❌ Driver not found for car '{car_number}' (Order #{order_id}). "
-                                 f"Available cars in sheet: {available_cars}")
+                                 f"Available in sheet: {available_cars}")
                     await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND')
                     continue
                 
@@ -48,6 +59,7 @@ async def check_sheets_job(bot: Bot):
                     await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID')
                     continue
 
+                # Send to Driver
                 msg_text = (
                     f"🆕 **YANGI BUYURTMA!**\n\n"
                     f"🆔 **ID:** {order_id}\n"
@@ -56,13 +68,20 @@ async def check_sheets_job(bot: Bot):
                     f"📝 **Izoh:** {order['comment']}\n"
                 )
                 
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=msg_text,
-                    parse_mode="Markdown",
-                    reply_markup=kb.get_take_delivery_kb(order_id)
-                )
+                try:
+                    await bot.send_message(
+                        chat_id=telegram_id,
+                        text=msg_text,
+                        parse_mode="Markdown",
+                        reply_markup=kb.get_take_delivery_kb(order_id)
+                    )
+                    logger.info(f"✉️ Order #{order_id} sent to Driver {driver['driver_name']} (TID: {telegram_id}).")
+                except Exception as tg_err:
+                    logger.error(f"❌ Failed to send Telegram message to {telegram_id}: {tg_err}")
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_TG_SEND_FAILED')
+                    continue
                 
+                # Update status
                 await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
                 await asyncio.to_thread(update_driver_status_sheet, car_number, 'BUSY', order_id)
                 
@@ -72,7 +91,7 @@ async def check_sheets_job(bot: Bot):
                 await update_group_report(bot, order_id)
                 
             except Exception as e:
-                logger.error(f"Error processing order {order_id}: {e}")
+                logger.error(f"❌ Error processing order {order_id}: {e}")
                 
     except Exception as e:
-        logger.error(f"Error in check_sheets_job: {e}")
+        logger.error(f"❌ Critical error in check_sheets_job: {e}")
