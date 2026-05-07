@@ -107,8 +107,14 @@ async def handle_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("tr_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
-    status = "OLDI" if "tr_oldi_" in callback.data else "OLMADI"
+    order_id = callback.data.split("_")[-1]
+    if not order_id or order_id == "None":
+        order_id = (await state.get_data()).get('order_id')
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi, qayta urinib ko'ring.", show_alert=True)
+        return
+    now = get_now().isoformat()
+    status = "OLDI" if callback.data.startswith("tr_oldi_") else "OLMADI"
     await asyncio.to_thread(update_order, order_id, {'transit_at': now, 'transit_status': status})
     await state.set_state(DeliveryStates.LOADED_PHOTO)
     await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
@@ -125,7 +131,16 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("step_way_"))
 async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat(); order = await asyncio.to_thread(get_order, order_id)
+    order_id = callback.data.split("_")[-1]
+    if not order_id or order_id == "None":
+        order_id = (await state.get_data()).get('order_id')
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi, qayta urinib ko'ring.", show_alert=True)
+        return
+    now = get_now().isoformat(); order = await asyncio.to_thread(get_order, order_id)
+    if not order:
+        await callback.answer("Buyurtma topilmadi, qayta urinib ko'ring.", show_alert=True)
+        return
     asyncio.create_task(asyncio.to_thread(update_order, order_id, {'on_way_at': now, 'current_status': 'YOLDA'}))
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'YOLDA'))
     asyncio.create_task(asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BAND (YOLDA)', order_id))
@@ -135,7 +150,13 @@ async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("step_arrived_"))
 async def step_arrived(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
+    order_id = callback.data.split("_")[-1]
+    if not order_id or order_id == "None":
+        order_id = (await state.get_data()).get('order_id')
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi, qayta urinib ko'ring.", show_alert=True)
+        return
+    now = get_now().isoformat()
     await asyncio.to_thread(update_order, order_id, {'arrived_at': now, 'current_status': 'MANZILDA'})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'MANZILDA'))
     await state.set_state(DeliveryStates.DELIVERED_LOC)
@@ -162,7 +183,13 @@ async def handle_delivered_location(message: Message, state: FSMContext, bot: Bo
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    order_id = (await state.get_data()).get('order_id'); now = get_now().isoformat()
+    order_id = callback.data.split("_")[-1]
+    if not order_id or order_id == "None":
+        order_id = (await state.get_data()).get('order_id')
+    if not order_id or order_id == "None":
+        await callback.answer("Buyurtma ID topilmadi, qayta urinib ko'ring.", show_alert=True)
+        return
+    now = get_now().isoformat()
     order = await asyncio.to_thread(get_order, order_id)
     if not order: return
     
