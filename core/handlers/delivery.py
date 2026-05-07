@@ -116,20 +116,16 @@ async def handle_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     order_id = callback.data.split("_")[-1]
     if not order_id or order_id == "None":
-        order_id = (await state.get_data()).get('order_id')
-    if not order_id or order_id == "None":
         await callback.answer("Buyurtma ID topilmadi", show_alert=True)
         return
     now = get_now().isoformat()
-    status = "OLDI" if callback.data.startswith("tr_oldi_") else "OLMADI"
-    await asyncio.to_thread(update_order, order_id, {'transit_at': now, 'transit_status': status})
-    await state.set_state(DeliveryStates.LOADED_PHOTO)
-    if status == "OLDI":
-        await callback.message.edit_text(f"🚛✨ Transit: ✅ HA (OLDI) belgilandi\n\n📸 Yuk ortilgan rasmni yuboring")
-    else:
-        await callback.message.edit_text(f"🚛❌ Transit: YO'Q (OLMADI) belgilandi\n\n📸 Yuk ortilgan rasmni yuboring")
-    asyncio.create_task(update_group_report(bot, order_id))
-    await callback.answer()
+    status = "OLDI" if "tr_oldi_" in callback.data else "OLMADI"
+    await asyncio.to_thread(update_order, order_id, {
+        "transit_at": now,
+        "transit_status": status
+    })
+    await state.update_data(order_id=order_id, transit_status=status)
+    await callback.answer(f"Transit: {status}")
 
 @router.message(DeliveryStates.LOADED_PHOTO, F.photo | F.document)
 async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
@@ -212,7 +208,15 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     await asyncio.to_thread(update_order, order_id, {'finished_at': now, 'current_status': 'YAKUNLANDI'})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI'))
     
-    # 1. Driver Report
+    # Reload fresh order from DB
+    order = await asyncio.to_thread(get_order, order_id)
+    
+    # Safety fallback for transit_status
+    if not order.get('transit_status'):
+        if order.get('transit_at'):
+            order['transit_status'] = "OLDI"
+        else:
+            order['transit_status'] = "OLMADI"
     acc_at = order.get('accepted_at')
     fin_at = now
     
