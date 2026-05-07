@@ -139,7 +139,8 @@ async def step_arrived(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await asyncio.to_thread(update_order, order_id, {'arrived_at': now, 'current_status': 'MANZILDA'})
     asyncio.create_task(asyncio.to_thread(update_order_status_by_order_id, order_id, 'MANZILDA'))
     await state.set_state(DeliveryStates.DELIVERED_LOC)
-    await callback.message.edit_text(f"✅ Manzilga yetib buldingiz.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    await callback.message.edit_text(f"✅ Manzilga yetib buldingiz.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**")
+    await callback.message.answer("📍 Lokatsiyani yuboring:", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.ACT_PHOTO, F.photo | F.document)
