@@ -206,3 +206,61 @@ def get_driver_by_tid(tid):
     except Exception as e:
         logger.error(f"Error getting driver by tid: {e}")
         return None
+
+# --- Admin Panel Functions ---
+
+def get_drivers_status_list():
+    """Returns a list of dicts for admin panel status view."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:E').execute()
+        values = result.get('values', [])
+        if not values or len(values) < 2: return []
+        
+        data = []
+        for row in values[1:]:
+            if not row or len(row) < 1: continue
+            data.append({
+                'car_number': row[0].strip().upper() if len(row) > 0 else "-",
+                'driver_name': row[1] if len(row) > 1 else "-",
+                'status': row[3] if len(row) > 3 else "IDLE",
+                'order_id': row[4] if len(row) > 4 else ""
+            })
+        return data
+    except Exception as e:
+        logger.error(f"Error getting drivers status list: {e}")
+        return []
+
+def get_all_drivers_list():
+    """Returns a list of tuples (name, telegram_id) for history filtering."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:C').execute()
+        values = result.get('values', [])
+        if not values or len(values) < 2: return []
+        
+        drivers = []
+        for row in values[1:]:
+            if len(row) >= 3 and row[2]:
+                drivers.append((row[1], row[2]))
+        return drivers
+    except Exception as e:
+        logger.error(f"Error getting all drivers list: {e}")
+        return []
+
+def get_all_cars_list():
+    """Returns a unique list of car numbers for history filtering."""
+    sheets = get_sheets_service()
+    if not sheets: return []
+    try:
+        result = sheets.values().get(spreadsheetId=GOOGLE_SHEET_ID, range=f'{DRIVERS_SHEET_NAME}!A:A').execute()
+        values = result.get('values', [])
+        if not values or len(values) < 2: return []
+        
+        cars = sorted(list(set([row[0].strip().upper() for row in values[1:] if row])))
+        return cars
+    except Exception as e:
+        logger.error(f"Error getting all cars list: {e}")
+        return []
