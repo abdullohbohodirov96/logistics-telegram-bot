@@ -19,10 +19,18 @@ router = Router()
 logger = logging.getLogger(__name__)
 tz = pytz.timezone(TIMEZONE)
 
+from aiogram.filters import Command
+
+@router.message(Command("admin"))
 @router.message(F.text == "/drivers")
 @router.message(F.text == "🛠 Admin panel")
 async def admin_panel(message: Message):
-    if message.from_user.id not in ADMIN_IDS: return
+    if message.from_user.id not in ADMIN_IDS:
+        logger.warning(f"Admin access denied user_id: {message.from_user.id}")
+        await message.answer("Siz admin emassiz.")
+        return
+    
+    logger.info(f"Admin panel opened by user_id: {message.from_user.id}")
     
     if message.text == "/drivers":
         await show_cars_status_message(message)
@@ -36,9 +44,14 @@ async def show_cars_status_message(message: Message):
         return
 
     t0 = time.time()
-    data = await asyncio.to_thread(get_drivers_status_list)
+    try:
+        data = await asyncio.to_thread(get_drivers_status_list)
+    except Exception as e:
+        logger.error(f"Admin data load error: {e}")
+        data = None
+        
     if not data:
-        await message.answer("⚠️ Haydovchilar ma'lumoti topilmadi.")
+        await message.answer("⚠️ Ma'lumot olinmadi.")
         return
         
     text = "🚛 **Haydovchilar holati:**\n\n"
@@ -53,8 +66,18 @@ async def show_cars_status_message(message: Message):
 
 @router.callback_query(F.data == "adm_cars_status")
 async def show_cars_status_callback(callback: CallbackQuery):
+    logger.info("Admin callback received: adm_cars_status")
     await callback.answer()
     await show_cars_status_message(callback.message)
+
+@router.callback_query(F.data == "adm_refresh")
+async def refresh_admin_panel(callback: CallbackQuery):
+    logger.info("Admin callback received: adm_refresh")
+    await callback.answer("Yangilandi ✅")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb.get_admin_panel_kb())
+    except:
+        pass
 
 @router.callback_query(F.data == "adm_close")
 async def close_admin(callback: CallbackQuery):
