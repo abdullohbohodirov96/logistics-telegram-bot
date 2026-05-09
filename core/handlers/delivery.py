@@ -219,6 +219,8 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     def get_emoji_line(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
         if dt2:
             d_str = format_duration_detailed(get_seconds_diff(dt1, dt2))
+            dt_formatted = parse_dt(dt2).strftime('%H:%M') if parse_dt(dt2) else ""
+            
             is_ok = (status == success_val) if status else True
             if not status and label in ["📸 Yuk rasmi", "🛣 Yo'lga chiqish", "🧾 Akt rasmi", "📍 Lokatsiya"]: is_ok = True
             
@@ -226,9 +228,9 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
             st_text = status if status else ("YUBORILDI" if "Lokatsiya" in label else "OLINDI" if "rasmi" in label else "BOSILDI")
             
             if is_ok:
-                return f"{emoji_ok} {label}: {ok_icon} {st_text} — {d_str}"
+                return f"{emoji_ok} {label}: {ok_icon} {st_text} — {d_str} ({dt_formatted})"
             else:
-                return f"{emoji_fail} {label}: {fail_icon} {st_text} — {d_str}"
+                return f"{emoji_fail} {label}: {fail_icon} {st_text} — {d_str} ({dt_formatted})"
         else:
             return f"{emoji_fail} {label}: {fail_icon} YUBORILMADI"
 
