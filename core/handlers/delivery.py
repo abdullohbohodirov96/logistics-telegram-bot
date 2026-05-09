@@ -135,9 +135,6 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Buyurtma topilmadi. Iltimos, qaytadan urinib ko'ring.")
         return
     await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
-    if GROUP_CHAT_ID:
-        try: await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=file_id, caption=f"📸 Yuk ortilgan rasm #{order_id}")
-        except: pass
     await state.set_state(DeliveryStates.ON_WAY)
     addr = order.get('address', '-')
     await message.answer(f"✅ Rasm qabul qilindi.\n\n📍 **Manzil:** {addr}\n\n**Yo'lga chiqdingizmi?**", reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}"))
@@ -171,9 +168,6 @@ async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Buyurtma topilmadi.")
         return
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
-    if GROUP_CHAT_ID:
-        try: await bot.send_photo(chat_id=GROUP_CHAT_ID, photo=file_id, caption=f"📄 Qo'l qo'ydirilgan akt rasmi #{order_id}")
-        except: pass
     await state.set_state(DeliveryStates.DELIVERED_LOC)
     await message.answer(f"✅ Akt qabul qilindi.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
     asyncio.create_task(update_group_report(bot, order_id))
@@ -211,6 +205,10 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     if not order:
         try: await callback.message.edit_text("❌ Buyurtma topilmadi.")
         except Exception: pass
+        return
+
+    if not order.get('loaded_photo_file_id') or not order.get('act_photo_file_id'):
+        await callback.answer("❌ Yakunlash uchun yuk va akt rasmlari yuborilmagan!", show_alert=True)
         return
 
     await state.clear()
@@ -269,13 +267,12 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                         f"{line_a}\n{line_b}\n{line_c}\n{line_d}\n{line_tr}\n{line_yuk}\n{line_way}\n{line_act}\n{line_loc}\n\n"
                         f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
             
-            await bot.send_message(chat_id=GROUP_CHAT_ID, text=grp_text, parse_mode="Markdown", disable_web_page_preview=False)
-            media = []
-            if order.get('loaded_photo_file_id'): media.append(InputMediaPhoto(media=order['loaded_photo_file_id'], caption=f"📸 Buyurtma rasmlari #{order_id}\n1) Yuk ortilgan rasm\n2) Qo'l qo'ydirilgan akt rasmi"))
-            if order.get('act_photo_file_id'): media.append(InputMediaPhoto(media=order['act_photo_file_id']))
-            if media:
-                try: await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
-                except: pass
+            media = [
+                InputMediaPhoto(media=order['loaded_photo_file_id'], caption=grp_text, parse_mode="Markdown"),
+                InputMediaPhoto(media=order['act_photo_file_id'])
+            ]
+            try: await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
+            except Exception as e: logger.error(f"Failed to send media group: {e}")
         tid = callback.from_user.id
         res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute())
         if not res.data: await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), "BO'SH", "")
