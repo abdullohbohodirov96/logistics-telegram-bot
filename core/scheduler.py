@@ -46,6 +46,11 @@ async def check_sheets_job(bot: Bot):
                 car_number = order['car_number'].strip().upper()
                 driver = drivers.get(car_number)
                 
+                if driver and driver.get('status', '').strip().upper() == 'YUK OGAN':
+                    logger.warning(f"⚠️ Driver '{car_number}' is already 'YUK OGAN'. Skipping Order #{order_id}.")
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_BUSY')
+                    continue
+                
                 if not driver:
                     available_cars = list(drivers.keys())
                     logger.error(f"❌ Driver not found for car '{car_number}' (Order #{order_id}). "
@@ -83,7 +88,7 @@ async def check_sheets_job(bot: Bot):
                 
                 # Update status
                 await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
-                await asyncio.to_thread(update_driver_status_sheet, car_number, 'BUSY', order_id)
+                await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
                 
                 PROCESSED_ORDERS[order_id] = True
                 

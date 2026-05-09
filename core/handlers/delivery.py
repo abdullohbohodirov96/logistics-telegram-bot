@@ -88,7 +88,7 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
         now = get_now().isoformat()
         await asyncio.to_thread(update_order, order_id, {'current_status': 'QABUL_QILINDI', 'accepted_at': now, 'driver_telegram_id': callback.from_user.id, 'driver_name': callback.from_user.full_name})
         await asyncio.to_thread(update_order_status_by_order_id, order_id, 'QABUL_QILINDI')
-        await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'BUSY', order_id)
+        await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'YUK OGAN', order_id)
         await update_group_report(bot, order_id)
     asyncio.create_task(process_take())
 
@@ -278,7 +278,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 except: pass
         tid = callback.from_user.id
         res = await asyncio.to_thread(lambda: supabase.table('orders').select('id').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute())
-        if not res.data: await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'IDLE', "")
+        if not res.data: await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), "BO'SH", "")
     
     asyncio.create_task(finish_background())
 @router.message(DeliveryStates())

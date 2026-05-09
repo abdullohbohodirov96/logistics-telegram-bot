@@ -69,8 +69,8 @@ def get_new_orders():
         new_orders = []
         for i, row in enumerate(values[1:], start=2):
             status_val = row[status_idx].strip() if len(row) > status_idx else ""
-            # Process only empty status rows
-            if not status_val:
+            # Process only SEND status rows
+            if status_val.upper() == "SEND":
                 order_id = row[id_idx].strip() if len(row) > id_idx else f"row_{i}"
                 new_orders.append({
                     'row_index': i,
@@ -99,7 +99,7 @@ def get_drivers():
             if len(row) < 3: continue
             car_raw = str(row[0]).strip().upper()
             if not car_raw: continue
-            drivers[car_raw] = {'driver_name': row[1], 'telegram_id': row[2], 'status': row[3] if len(row) > 3 else "IDLE"}
+            drivers[car_raw] = {'driver_name': row[1], 'telegram_id': row[2], 'status': row[3] if len(row) > 3 else "BO'SH"}
         return drivers
     except Exception as e:
         logger.error(f"Error get_drivers: {e}")
@@ -170,7 +170,7 @@ def get_drivers_status_list():
         worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
         values = worksheet.get_all_values()
         if not values or len(values) < 2: return []
-        return [{'car_number': r[0].strip().upper(), 'driver_name': r[1], 'status': r[3] if len(r) > 3 else "IDLE", 'order_id': r[4] if len(r) > 4 else ""} for r in values[1:] if r]
+        return [{'car_number': r[0].strip().upper(), 'driver_name': r[1], 'status': r[3] if len(r) > 3 else "BO'SH", 'order_id': r[4] if len(r) > 4 else ""} for r in values[1:] if r]
     except Exception as e:
         logger.error(f"Error get_drivers_status_list: {e}")
         return []
