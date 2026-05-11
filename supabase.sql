@@ -24,7 +24,16 @@ create table public.orders (
     finished_at timestamptz,
     start_time timestamptz,
     finish_time timestamptz,
-    duration_minutes integer
+    duration_minutes integer,
+    stage_history jsonb default '[]'::jsonb,
+    a_block_status text,
+    a_block_at timestamptz,
+    b_block_status text,
+    b_block_at timestamptz,
+    c_block_status text,
+    c_block_at timestamptz,
+    d_block_status text,
+    d_block_at timestamptz
 );
 
 -- Performance indexes for fast filtering

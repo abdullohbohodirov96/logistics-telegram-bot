@@ -2,6 +2,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 class DeliveryStates(StatesGroup):
     WAITING_TAKE = State()
+    BLOCK_MENU = State()
+    BLOCK_SUBMENU = State()
     A_BLOCK = State()
     B_BLOCK = State()
     C_BLOCK = State()

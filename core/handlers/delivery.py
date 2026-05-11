@@ -32,13 +32,17 @@ def get_seconds_diff(start_iso, end_iso):
 
 def build_interim_report(order):
     order_id = order.get('order_id', '-')
-    a_icon = get_status_icon(order.get('a_block_status'))
-    b_icon = get_status_icon(order.get('b_block_status'))
-    c_icon = get_status_icon(order.get('c_block_status'))
-    d_icon = get_status_icon(order.get('d_block_status'))
-    tr_icon = get_status_icon(order.get('transit_status'))
-    acc_at = parse_dt(order.get('accepted_at'))
-    acc_time = acc_at.strftime('%H:%M') if acc_at else "—"
+    stage_history = order.get('stage_history') or []
+    
+    # Create a map for quick access
+    history_map = {item['stage']: item for item in stage_history}
+    
+    def get_stage_status(label):
+        item = history_map.get(label)
+        if item:
+            return f"{item.get('emoji', '✅')} {item.get('status', 'ORTDI')} ({item.get('completed_at', '-')})"
+        return "⏳ Tanlanmagan"
+
     text = (
         f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
         f"📍 **Manzil:** {order.get('address', '-')}\n"
@@ -46,9 +50,13 @@ def build_interim_report(order):
         f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🏗 **Yuklash:**\n"
-        f"A: {a_icon}  B: {b_icon}  C: {c_icon}  D: {d_icon}  Transit: {tr_icon}\n\n"
+        f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
+        f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
+        f"©️ C-blok: {get_stage_status('C-blok')}\n"
+        f"🇩 D-blok: {get_stage_status('D-blok')}\n"
+        f"🚚 Transit: {get_status_icon(order.get('transit_status'))}\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
-        f"⏰ **Boshlandi:** {acc_time}\n"
+        f"⏰ **Boshlandi:** {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
     )
     return text
 
@@ -76,11 +84,19 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
     if await state.get_state() is not None: return
     order_id = callback.data.split("_")[1]
     
-    try:
-        await callback.message.edit_text(f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\nSavol: **A-blokdan narsa ortdingizmi?**", reply_markup=kb.get_block_kb("A", order_id))
-    except Exception: pass
+    await state.update_data(order_id=order_id, stage_history=[])
+    await state.set_state(DeliveryStates.BLOCK_MENU)
     
-    await state.update_data(order_id=order_id); await state.set_state(DeliveryStates.A_BLOCK)
+    try:
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"🅰️ A-blok: ⏳ Tanlanmagan\n"
+            f"🅱️ B-blok: ⏳ Tanlanmagan\n"
+            f"©️ C-blok: ⏳ Tanlanmagan\n"
+            f"🇩 D-blok: ⏳ Tanlanmagan",
+            reply_markup=kb.get_block_menu_kb(order_id, [])
+        )
+    except Exception: pass
     
     async def process_take():
         order = await asyncio.to_thread(get_order, order_id)
@@ -92,24 +108,143 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
         await update_group_report(bot, order_id)
     asyncio.create_task(process_take())
 
-@router.callback_query(F.data.startswith("block_"))
-async def handle_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data.startswith("sel_block_"))
+async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    parts = callback.data.split("_"); letter, status, order_id = parts[1], parts[2].upper(), parts[3]; now = get_now().isoformat()
-    next_map = {"A": ("B", DeliveryStates.B_BLOCK), "B": ("C", DeliveryStates.C_BLOCK), "C": ("D", DeliveryStates.D_BLOCK)}
-    if letter in next_map:
-        next_letter, next_state = next_map[letter]; await state.set_state(next_state)
-        try: await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **{next_letter}-blokdan narsa ortdingizmi?**", reply_markup=kb.get_block_kb(next_letter, order_id))
-        except Exception: pass
-    else:
-        await state.set_state(DeliveryStates.TRANSIT)
-        try: await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
-        except Exception: pass
+    parts = callback.data.split("_")
+    letter, order_id = parts[2], parts[3]
     
-    async def process_block():
-        await asyncio.to_thread(update_order, order_id, {f'{letter.lower()}_block_at': now, f'{letter.lower()}_block_status': status})
+    data = await state.get_data()
+    stage_history = data.get('stage_history') or []
+    
+    # Check if already selected
+    if any(item['stage'] == f"{letter}-blok" for item in stage_history):
+        await callback.answer("Bu blok allaqachon belgilangan", show_alert=True)
+        return
+        
+    await state.set_state(DeliveryStates.BLOCK_SUBMENU)
+    try:
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\n"
+            f"**{letter}-blok**\n\n"
+            f"Ushbu blokdan yuk oldingizmi?",
+            reply_markup=kb.get_block_selection_kb(letter, order_id)
+        )
+    except Exception: pass
+
+@router.callback_query(F.data.startswith("block_act_"))
+async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
+    parts = callback.data.split("_")
+    letter, status_type, order_id = parts[2], parts[3], parts[4]
+    now = get_now()
+    
+    data = await state.get_data()
+    stage_history = data.get('stage_history') or []
+    
+    # Calculate duration
+    if not stage_history:
+        # First block: from accepted_at
+        order = await asyncio.to_thread(get_order, order_id)
+        start_time = parse_dt(order.get('accepted_at')) or now
+    else:
+        # Subsequent blocks: from previous block in history
+        last_item = stage_history[-1]
+        # We need the full timestamp of the last item. We'll store it in FSM data.
+        start_time = data.get('last_block_time') or now
+
+    duration_seconds = int((now - start_time).total_seconds())
+    
+    status = "ORTDI" if status_type == "ortdi" else "ORTMADI"
+    emoji = "✅" if status_type == "ortdi" else "❌"
+    color = "🟩" if status_type == "ortdi" else "🟥"
+    
+    new_entry = {
+        "stage": f"{letter}-blok",
+        "status": status,
+        "emoji": emoji,
+        "color": color,
+        "duration_seconds": duration_seconds,
+        "completed_at": now.strftime("%H:%M"),
+        "full_at": now.isoformat(),
+        "sequence": len(stage_history) + 1
+    }
+    
+    stage_history.append(new_entry)
+    await state.update_data(stage_history=stage_history, last_block_time=now)
+    await state.set_state(DeliveryStates.BLOCK_MENU)
+    
+    # Update Supabase
+    async def process_update():
+        await asyncio.to_thread(update_order, order_id, {
+            'stage_history': stage_history,
+            f'{letter.lower()}_block_status': status,
+            f'{letter.lower()}_block_at': now.isoformat()
+        })
         await update_group_report(bot, order_id)
-    asyncio.create_task(process_block())
+    asyncio.create_task(process_update())
+    
+    # Show menu again
+    history_map = {item['stage']: item for item in stage_history}
+    def get_stage_status(label):
+        item = history_map.get(label)
+        if item:
+            return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
+        return "⏳ Tanlanmagan"
+
+    try:
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
+            f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
+            f"©️ C-blok: {get_stage_status('C-blok')}\n"
+            f"🇩 D-blok: {get_stage_status('D-blok')}",
+            reply_markup=kb.get_block_menu_kb(order_id, stage_history)
+        )
+    except Exception: pass
+
+@router.callback_query(F.data.startswith("block_back_"))
+async def handle_block_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    order_id = callback.data.split("_")[2]
+    data = await state.get_data()
+    stage_history = data.get('stage_history') or []
+    
+    await state.set_state(DeliveryStates.BLOCK_MENU)
+    
+    history_map = {item['stage']: item for item in stage_history}
+    def get_stage_status(label):
+        item = history_map.get(label)
+        if item:
+            return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
+        return "⏳ Tanlanmagan"
+
+    try:
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
+            f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
+            f"©️ C-blok: {get_stage_status('C-blok')}\n"
+            f"🇩 D-blok: {get_stage_status('D-blok')}",
+            reply_markup=kb.get_block_menu_kb(order_id, stage_history)
+        )
+    except Exception: pass
+
+@router.callback_query(F.data.startswith("confirm_blocks_"))
+async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
+    order_id = callback.data.split("_")[2]
+    data = await state.get_data()
+    stage_history = data.get('stage_history') or []
+    
+    if len(stage_history) < 4:
+        await callback.answer("Avval A/B/C/D bloklarning hammasini belgilang", show_alert=True)
+        return
+        
+    await state.set_state(DeliveryStates.TRANSIT)
+    try:
+        await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
+    except Exception: pass
 
 @router.callback_query(F.data.startswith("tr_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -198,7 +333,9 @@ async def delivered_loc_wrong_input(message: Message):
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
-    order_id = (await state.get_data()).get('order_id'); now = get_now().isoformat()
+    data = await state.get_data()
+    order_id = data.get('order_id')
+    now = get_now().isoformat()
     if not order_id: return
     
     order = await asyncio.to_thread(get_order, order_id)
@@ -213,40 +350,52 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
 
     await state.clear()
     
-    acc_at = order.get('accepted_at'); fin_at = now
+    acc_at = order.get('accepted_at')
+    fin_at = now
     d_total = format_duration_detailed(get_seconds_diff(acc_at, fin_at))
     
+    def format_stage_line(label, status, emoji, color, duration_sec, comp_at):
+        d_str = format_duration_detailed(duration_sec)
+        return f"{color} {label}: {emoji} {status} — {d_str} ({comp_at})"
+
+    stage_history = order.get('stage_history') or []
+    history_lines = []
+    
+    for item in stage_history:
+        line = format_stage_line(
+            item['stage'], item['status'], item['emoji'], 
+            item['color'], item['duration_seconds'], item['completed_at']
+        )
+        history_lines.append(line)
+    
+    # Other stages (sequential after blocks)
     def get_emoji_line(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
         if dt2:
             d_str = format_duration_detailed(get_seconds_diff(dt1, dt2))
             dt_formatted = parse_dt(dt2).strftime('%H:%M') if parse_dt(dt2) else ""
-            
             is_ok = (status == success_val) if status else True
-            if not status and label in ["📸 Yuk rasmi", "🛣 Yo'lga chiqish", "🧾 Akt rasmi", "📍 Lokatsiya"]: is_ok = True
-            
-            # Use specific status text or default
             st_text = status if status else ("YUBORILDI" if "Lokatsiya" in label else "OLINDI" if "rasmi" in label else "BOSILDI")
-            
-            if is_ok:
-                return f"{emoji_ok} {label}: {ok_icon} {st_text} — {d_str} ({dt_formatted})"
-            else:
-                return f"{emoji_fail} {label}: {fail_icon} {st_text} — {d_str} ({dt_formatted})"
+            icon = ok_icon if is_ok else fail_icon
+            color = emoji_ok if is_ok else emoji_fail
+            return f"{color} {label}: {icon} {st_text} — {d_str} ({dt_formatted})"
         else:
-            return f"{emoji_fail} {label}: {fail_icon} YUBORILMADI"
+            return f"{emoji_fail} {label}: ❌ YUBORILMADI"
 
-    line_a = get_emoji_line("A-blok", order.get('a_block_status'), acc_at, order.get('a_block_at'), "ORTDI")
-    line_b = get_emoji_line("B-blok", order.get('b_block_status'), order.get('a_block_at'), order.get('b_block_at'), "ORTDI")
-    line_c = get_emoji_line("C-blok", order.get('c_block_status'), order.get('b_block_at'), order.get('c_block_at'), "ORTDI")
-    line_d = get_emoji_line("D-blok", order.get('d_block_status'), order.get('c_block_at'), order.get('d_block_at'), "ORTDI")
-    line_tr = get_emoji_line("Transit", order.get('transit_status'), order.get('d_block_at'), order.get('transit_at'), "OLDI", "🚚", "🚚")
+    # Last block time for Transit calculation
+    last_block_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
+    
+    line_tr = get_emoji_line("Transit", order.get('transit_status'), last_block_at, order.get('transit_at'), "OLDI", "🚚", "🚚")
     line_yuk = get_emoji_line("Yuk rasmi", "", order.get('transit_at'), order.get('loaded_photo_at'), "", "📸", "📸")
     line_way = get_emoji_line("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
     line_act = get_emoji_line("Akt rasmi", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
     line_loc = get_emoji_line("Lokatsiya", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
 
-    drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M')}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
+    history_lines.extend([line_tr, line_yuk, line_way, line_act, line_loc])
+    etaplar_text = "\n".join(history_lines)
+
+    drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
                f"📋 **Etaplar:**\n"
-               f"{line_a}\n{line_b}\n{line_c}\n{line_d}\n{line_tr}\n{line_yuk}\n{line_way}\n{line_act}\n{line_loc}\n")
+               f"{etaplar_text}\n")
     
     try: await callback.message.edit_text(drv_msg, parse_mode="Markdown")
     except Exception: pass
@@ -262,11 +411,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
             
             maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
             
-            grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M')}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
+            grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
                         f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n🚘 **Mashina:** {order.get('car_number', '-')}\n"
                         f"📍 **Manzil:** {order.get('address', '-')}\n📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
                         f"📋 **Etaplar:**\n"
-                        f"{line_a}\n{line_b}\n{line_c}\n{line_d}\n{line_tr}\n{line_yuk}\n{line_way}\n{line_act}\n{line_loc}\n\n"
+                        f"{etaplar_text}\n\n"
                         f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
             
             media = [

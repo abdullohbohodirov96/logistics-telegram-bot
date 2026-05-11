@@ -11,12 +11,28 @@ def get_take_delivery_kb(order_id: str):
         [InlineKeyboardButton(text="✅ Buyurtmani qabul qilish", callback_data=f"take_{order_id}")]
     ])
 
-def get_block_kb(block_letter: str, order_id: str):
+def get_block_menu_kb(order_id: str, stage_history: list):
+    builder = InlineKeyboardBuilder()
+    selected_stages = [item['stage'] for item in stage_history]
+    
+    stages = ["A-blok", "B-blok", "C-blok", "D-blok"]
+    for stage in stages:
+        text = stage
+        if stage in selected_stages:
+            text = f"✅ {stage}"
+        builder.button(text=text, callback_data=f"sel_block_{stage[0]}_{order_id}")
+    
+    builder.adjust(2)
+    builder.row(InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"confirm_blocks_{order_id}"))
+    return builder.as_markup()
+
+def get_block_selection_kb(block_letter: str, order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Ortdim", callback_data=f"block_{block_letter}_ortdi_{order_id}"),
-            InlineKeyboardButton(text="❌ Ortmadim", callback_data=f"block_{block_letter}_ortmadi_{order_id}")
-        ]
+            InlineKeyboardButton(text="✅ Oldim", callback_data=f"block_act_{block_letter}_ortdi_{order_id}"),
+            InlineKeyboardButton(text="❌ Olmadim", callback_data=f"block_act_{block_letter}_ortmadi_{order_id}")
+        ],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"block_back_{order_id}")]
     ])
 
 def get_transit_kb(order_id: str):
