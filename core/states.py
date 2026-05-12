@@ -9,6 +9,7 @@ class DeliveryStates(StatesGroup):
     C_BLOCK = State()
     D_BLOCK = State()
     TRANSIT = State()
+    TRANSIT_EXTRA = State()
     LOADED_PHOTO = State()
     ON_WAY = State()
     ARRIVED_CLIENT = State()

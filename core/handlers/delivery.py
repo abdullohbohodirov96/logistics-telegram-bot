@@ -43,6 +43,16 @@ def build_interim_report(order):
             return f"{item.get('emoji', '✅')} {item.get('status', 'ORTDI')} ({item.get('completed_at', '-')})"
         return "⏳ Tanlanmagan"
 
+    # Build transits section
+    transits_text = ""
+    transits = [item for item in stage_history if item['stage'].startswith("Transit")]
+    if not transits:
+        transits_text = f"🚚 Transit: {get_status_icon(order.get('transit_status'))}"
+    else:
+        for t in transits:
+            transits_text += f"{t.get('emoji', '✅')} {t['stage']}: {t['status']} ({t['completed_at']})\n"
+        transits_text = transits_text.strip()
+
     text = (
         f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
         f"📍 **Manzil:** {order.get('address', '-')}\n"
@@ -54,7 +64,7 @@ def build_interim_report(order):
         f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
         f"©️ C-blok: {get_stage_status('C-blok')}\n"
         f"🇩 D-blok: {get_stage_status('D-blok')}\n"
-        f"🚚 Transit: {get_status_icon(order.get('transit_status'))}\n\n"
+        f"{transits_text}\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
         f"⏰ **Boshlandi:** {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
     )
@@ -249,17 +259,134 @@ async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot:
 @router.callback_query(F.data.startswith("tr_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
-    data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
+    data = await state.get_data()
+    order_id = data.get('order_id')
     if not order_id: return
-    status = "OLDI" if "tr_oldi_" in callback.data else "OLMADI"
-    await state.set_state(DeliveryStates.LOADED_PHOTO)
-    try: await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
-    except Exception: pass
     
-    async def process_tr():
-        await asyncio.to_thread(update_order, order_id, {'transit_at': now, 'transit_status': status})
+    now = get_now()
+    stage_history = data.get('stage_history') or []
+    last_block_time = data.get('last_block_time') or now
+    duration_seconds = int((now - last_block_time).total_seconds())
+    
+    if "tr_oldi_" in callback.data:
+        status = "OLDI"
+        emoji = "✅"
+        label = "Transit 1"
+        
+        new_entry = {
+            "stage": label,
+            "status": status,
+            "emoji": emoji,
+            "color": "🚚",
+            "duration_seconds": duration_seconds,
+            "completed_at": now.strftime("%H:%M"),
+            "full_at": now.isoformat(),
+            "sequence": len(stage_history) + 1
+        }
+        stage_history.append(new_entry)
+        await state.update_data(stage_history=stage_history, last_block_time=now)
+        await state.set_state(DeliveryStates.TRANSIT_EXTRA)
+        
+        try:
+            await callback.message.edit_text(
+                f"📦 **Buyurtma #{order_id}**\n\n"
+                f"🚚 **2-transitingiz bormi?**",
+                reply_markup=kb.get_transit_extra_kb(2, order_id)
+            )
+        except Exception: pass
+        
+        async def process_tr():
+            await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': status})
+            await update_group_report(bot, order_id)
+        asyncio.create_task(process_tr())
+        
+    else: # OLMADI
+        status = "OLMADI"
+        emoji = "❌"
+        label = "Transit"
+        
+        new_entry = {
+            "stage": label,
+            "status": status,
+            "emoji": emoji,
+            "color": "🚚",
+            "duration_seconds": duration_seconds,
+            "completed_at": now.strftime("%H:%M"),
+            "full_at": now.isoformat(),
+            "sequence": len(stage_history) + 1
+        }
+        stage_history.append(new_entry)
+        await state.update_data(stage_history=stage_history, last_block_time=now)
+        await state.set_state(DeliveryStates.LOADED_PHOTO)
+        
+        try:
+            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+        except Exception: pass
+        
+        async def process_tr():
+            await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': status})
+            await update_group_report(bot, order_id)
+        asyncio.create_task(process_tr())
+
+@router.callback_query(F.data.startswith("tr_extra_"))
+async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
+    parts = callback.data.split("_")
+    action, num, order_id = parts[2], int(parts[3]), parts[4]
+    
+    data = await state.get_data()
+    stage_history = data.get('stage_history') or []
+    now = get_now()
+    
+    if action == "yoq":
+        await state.set_state(DeliveryStates.LOADED_PHOTO)
+        try:
+            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+        except Exception: pass
+        return
+
+    # If action is "ha"
+    last_block_time = data.get('last_block_time') or now
+    duration_seconds = int((now - last_block_time).total_seconds())
+    
+    status = "OLDI"
+    emoji = "✅"
+    label = f"Transit {num}"
+    
+    new_entry = {
+        "stage": label,
+        "status": status,
+        "emoji": emoji,
+        "color": "🚚",
+        "duration_seconds": duration_seconds,
+        "completed_at": now.strftime("%H:%M"),
+        "full_at": now.isoformat(),
+        "sequence": len(stage_history) + 1
+    }
+    stage_history.append(new_entry)
+    await state.update_data(stage_history=stage_history, last_block_time=now)
+    
+    if num < 4:
+        # Ask for next transit
+        next_num = num + 1
+        try:
+            await callback.message.edit_text(
+                f"📦 **Buyurtma #{order_id}**\n\n"
+                f"🚚 **{next_num}-transitingiz bormi?**",
+                reply_markup=kb.get_transit_extra_kb(next_num, order_id)
+            )
+        except Exception: pass
+    else:
+        # Limit reached (4 transits)
+        await state.set_state(DeliveryStates.LOADED_PHOTO)
+        try:
+            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+        except Exception: pass
+
+    async def process_tr_extra():
+        await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': 'OLDI'})
         await update_group_report(bot, order_id)
-    asyncio.create_task(process_tr())
+    asyncio.create_task(process_tr_extra())
 
 @router.message(DeliveryStates.LOADED_PHOTO, F.photo | F.document)
 async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
@@ -368,7 +495,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         )
         history_lines.append(line)
     
-    # Other stages (sequential after blocks)
+    # Other stages (sequential after blocks and transits)
     def get_emoji_line(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
         if dt2:
             d_str = format_duration_detailed(get_seconds_diff(dt1, dt2))
@@ -381,16 +508,15 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         else:
             return f"{emoji_fail} {label}: ❌ YUBORILMADI"
 
-    # Last block time for Transit calculation
-    last_block_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
+    # Last action time for next duration calculation
+    last_action_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
     
-    line_tr = get_emoji_line("Transit", order.get('transit_status'), last_block_at, order.get('transit_at'), "OLDI", "🚚", "🚚")
-    line_yuk = get_emoji_line("Yuk rasmi", "", order.get('transit_at'), order.get('loaded_photo_at'), "", "📸", "📸")
+    line_yuk = get_emoji_line("Yuk rasmi", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
     line_way = get_emoji_line("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
     line_act = get_emoji_line("Akt rasmi", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
     line_loc = get_emoji_line("Lokatsiya", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
 
-    history_lines.extend([line_tr, line_yuk, line_way, line_act, line_loc])
+    history_lines.extend([line_yuk, line_way, line_act, line_loc])
     etaplar_text = "\n".join(history_lines)
 
     drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"

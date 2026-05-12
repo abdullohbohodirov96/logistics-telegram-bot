@@ -43,6 +43,14 @@ def get_transit_kb(order_id: str):
         ]
     ])
 
+def get_transit_extra_kb(transit_number: int, order_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha", callback_data=f"tr_extra_ha_{transit_number}_{order_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"tr_extra_yoq_{transit_number}_{order_id}")
+        ]
+    ])
+
 def get_step_kb(text: str, callback_data: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=text, callback_data=callback_data)]
