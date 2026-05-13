@@ -147,61 +147,75 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
     await callback.answer()
     parts = callback.data.split("_")
     letter, status_type, order_id = parts[2], parts[3], parts[4]
-    now = get_now()
-    
-    data = await state.get_data()
-    stage_history = data.get('stage_history') or []
-    
-    # Calculate duration
-    if not stage_history:
-        # First block: from accepted_at
-        order = await asyncio.to_thread(get_order, order_id)
-        start_time = parse_dt(order.get('accepted_at')) or now
-    else:
-        # Subsequent blocks: from previous block in history
-        last_item = stage_history[-1]
-        # We need the full timestamp of the last item. We'll store it in FSM data.
-        start_time = data.get('last_block_time') or now
-
-    duration_seconds = int((now - start_time).total_seconds())
-    
-    # If block already exists, remove it (we'll re-append it to the end as "latest")
-    stage_history = [item for item in stage_history if item['stage'] != f"{letter}-blok"]
-    
-    new_entry = {
-        "stage": f"{letter}-blok",
-        "status": status,
-        "emoji": emoji,
-        "color": color,
-        "duration_seconds": duration_seconds,
-        "completed_at": now.strftime("%H:%M"),
-        "full_at": now.isoformat(),
-        "sequence": len(stage_history) + 1
-    }
-    
-    stage_history.append(new_entry)
-    await state.update_data(stage_history=stage_history, last_block_time=now)
-    await state.set_state(DeliveryStates.BLOCK_MENU)
-    
-    # Update Supabase
-    async def process_update():
-        await asyncio.to_thread(update_order, order_id, {
-            'stage_history': stage_history,
-            f'{letter.lower()}_block_status': status,
-            f'{letter.lower()}_block_at': now.isoformat()
-        })
-        await update_group_report(bot, order_id)
-    asyncio.create_task(process_update())
-    
-    # Show menu again
-    history_map = {item['stage']: item for item in stage_history}
-    def get_stage_status(label):
-        item = history_map.get(label)
-        if item:
-            return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
-        return "⏳ Tanlanmagan"
-
     try:
+        now = get_now()
+        data = await state.get_data()
+        stage_history = data.get('stage_history') or []
+        
+        # Determine status, emoji, color
+        if status_type == "ortdi":
+            status = "ORTDI"
+            emoji = "✅"
+            color = "🟩"
+        elif status_type == "ortmadi":
+            status = "ORTMADI"
+            emoji = "❌"
+            color = "🟥"
+        else:
+            status = status_type.upper()
+            emoji = "⚪️"
+            color = "⚪️"
+
+        # Calculate duration
+        if not stage_history:
+            order = await asyncio.to_thread(get_order, order_id)
+            start_time = parse_dt(order.get('accepted_at')) if order else now
+            if not start_time: start_time = now
+        else:
+            start_time = data.get('last_block_time') or now
+
+        duration_seconds = int((now - start_time).total_seconds())
+        
+        # Update stage history
+        stage_history = [item for item in stage_history if item['stage'] != f"{letter}-blok"]
+        
+        new_entry = {
+            "stage": f"{letter}-blok",
+            "status": status,
+            "emoji": emoji,
+            "color": color,
+            "duration_seconds": duration_seconds,
+            "completed_at": now.strftime("%H:%M"),
+            "full_at": now.isoformat(),
+            "sequence": len(stage_history) + 1
+        }
+        
+        stage_history.append(new_entry)
+        await state.update_data(stage_history=stage_history, last_block_time=now)
+        await state.set_state(DeliveryStates.BLOCK_MENU)
+    
+        # Update Supabase
+        async def process_update():
+            try:
+                await asyncio.to_thread(update_order, order_id, {
+                    'stage_history': stage_history,
+                    f'{letter.lower()}_block_status': status,
+                    f'{letter.lower()}_block_at': now.isoformat()
+                })
+                await update_group_report(bot, order_id)
+            except Exception as e:
+                logger.error(f"Error in background update: {e}")
+        
+        asyncio.create_task(process_update())
+        
+        # Show menu again
+        history_map = {item['stage']: item for item in stage_history}
+        def get_stage_status(label):
+            item = history_map.get(label)
+            if item:
+                return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
+            return "⏳ Tanlanmagan"
+
         await callback.message.edit_text(
             f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
             f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
@@ -210,7 +224,11 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
             f"🇩 D-blok: {get_stage_status('D-blok')}",
             reply_markup=kb.get_block_menu_kb(order_id, stage_history)
         )
-    except Exception: pass
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error in handle_block_action: {e}\n{traceback.format_exc()}")
+        await callback.message.answer("⚠️ Amalda xatolik yuz berdi.")
 
 @router.callback_query(F.data.startswith("block_back_"))
 async def handle_block_back(callback: CallbackQuery, state: FSMContext):
