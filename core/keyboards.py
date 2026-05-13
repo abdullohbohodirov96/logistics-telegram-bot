@@ -9,11 +9,13 @@ def get_language_kb():
     ])
 
 def get_main_menu_kb(is_admin: bool = False, lang: str = "uz_latin"):
-    keyboard = [[KeyboardButton(text=_("my_tasks", lang))]]
-    keyboard.append([KeyboardButton(text=_("my_history", lang))])
+    keyboard = [
+        [KeyboardButton(text=_("my_tasks", lang))],
+        [KeyboardButton(text=_("change_lang", lang))],
+        [KeyboardButton(text=_("my_history", lang))]
+    ]
     if is_admin: 
         keyboard.append([KeyboardButton(text=_("admin_panel", lang))])
-    keyboard.append([KeyboardButton(text=_("change_lang", lang))])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_take_delivery_kb(order_id: str, lang: str = "uz_latin"):
