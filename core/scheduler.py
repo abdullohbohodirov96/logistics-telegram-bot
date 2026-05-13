@@ -64,35 +64,21 @@ async def check_sheets_job(bot: Bot):
                     await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID')
                     continue
 
-                # Fetch user language
-                from core.db import get_user
-                user = await asyncio.to_thread(get_user, telegram_id)
-                lang = user.get('language') if user else 'uz_latin'
-                from core.i18n import _
-
-                # Check active orders limit
+                # Check 3-order limit
                 from core.db import count_active_orders
                 active_count = await asyncio.to_thread(count_active_orders, telegram_id)
                 if active_count >= 3:
-                    logger.warning(f"⚠️ Driver {telegram_id} has {active_count} active orders. Skipping Order #{order_id}.")
-                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_MAX_3_ORDERS')
-                    # Alert Admin
-                    from core.config import ADMIN_IDS
-                    for admin_id in ADMIN_IDS:
-                        try:
-                            admin_user = await asyncio.to_thread(get_user, admin_id)
-                            a_lang = admin_user.get('language') if admin_user else 'uz_latin'
-                            await bot.send_message(admin_id, _('admin_too_many_active', a_lang) + f" (Order #{order_id})")
-                        except: pass
+                    logger.warning(f"⚠️ Driver '{car_number}' has {active_count} active orders. Limit reached.")
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'BUSY (3 ORDERS)')
                     continue
 
                 # Send to Driver
                 msg_text = (
-                    f"🆕 **{_('new_order', lang)}**\n\n"
-                    f"🆔 **{_('id', lang)}:** {order_id}\n"
-                    f"📍 **{_('address', lang)}:** {order['address']}\n"
-                    f"📦 **{_('cargo', lang)}:** {order['cargo']}\n"
-                    f"📝 **{_('comment', lang)}:** {order['comment']}\n"
+                    f"🆕 **YANGI BUYURTMA!**\n\n"
+                    f"🆔 **ID:** {order_id}\n"
+                    f"📍 **Manzil:** {order['address']}\n"
+                    f"📦 **Yuk:** {order['cargo']}\n"
+                    f"📝 **Izoh:** {order['comment']}\n"
                 )
                 
                 try:
@@ -100,7 +86,7 @@ async def check_sheets_job(bot: Bot):
                         chat_id=telegram_id,
                         text=msg_text,
                         parse_mode="Markdown",
-                        reply_markup=kb.get_take_delivery_kb(order_id, lang)
+                        reply_markup=kb.get_take_delivery_kb(order_id)
                     )
                     logger.info(f"✉️ Order #{order_id} sent to Driver {driver['driver_name']} (TID: {telegram_id}).")
                 except Exception as tg_err:
@@ -141,10 +127,8 @@ async def send_daily_ranking_job(bot: Bot):
         
         if not GROUP_CHAT_ID: return
 
-        from core.i18n import _
-        
         if not orders:
-            await bot.send_message(chat_id=GROUP_CHAT_ID, text=_('no_orders_today', 'uz_latin'))
+            await bot.send_message(chat_id=GROUP_CHAT_ID, text="Bugun yakunlangan reyslar yo'q.")
             return
             
         stats = {} # {tid: {name, car, count}}
@@ -157,7 +141,7 @@ async def send_daily_ranking_job(bot: Bot):
             
         ranking = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
         
-        msg = f"🏆 **{_('ranking_title', 'uz_latin')}**\n\n"
+        msg = "🏆 **Kunlik reyting**\n\n"
         emojis = ["🥇", "🥈", "🥉"]
         
         for i, (tid, s) in enumerate(ranking):

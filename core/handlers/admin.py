@@ -6,9 +6,11 @@ import pytz
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import Command
 
 from core.config import ADMIN_IDS, TIMEZONE, is_sheets_configured
-from core.db import get_history, get_active_orders, get_user
+from core.db import get_history, get_active_orders, get_user, get_driver_stats
+from core.cache import cache_get, cache_set
 import core.keyboards as kb
 from core.sheets import get_drivers_status_list, get_all_drivers_list, get_all_cars_list
 from core.states import AdminProcess
@@ -19,26 +21,30 @@ router = Router()
 logger = logging.getLogger(__name__)
 tz = pytz.timezone(TIMEZONE)
 
-from aiogram.filters import Command
-
 @router.message(Command("admin"))
+@router.message(F.text == "/drivers")
 @router.message(F.text.in_({"🛠 Admin panel", "🛠 Админ панел"}))
 async def admin_panel(message: Message):
     tid = message.from_user.id
+    if tid not in ADMIN_IDS:
+        logger.warning(f"Admin access denied user_id: {tid}")
+        await message.answer("Siz admin emassiz.")
+        return
+    
     user = get_user(tid)
     lang = user.get('language') if user else 'uz_latin'
     
-    if tid not in ADMIN_IDS:
-        logger.warning(f"Admin access denied user_id: {tid}")
-        await message.answer(_('admin_panel', lang) + " ❌ (Access Denied)")
-        return
-    
     try:
         logger.info(f"Admin panel opened by user_id: {tid}")
-        await message.answer(_('admin_panel', lang), reply_markup=kb.get_admin_panel_kb(lang))
+        
+        if message.text == "/drivers":
+            await show_cars_status_message(message)
+            return
+
+        await message.answer(_('admin_panel', lang) + ":", reply_markup=kb.get_admin_panel_kb(lang))
     except Exception as e:
         logger.error(f"Error opening admin panel: {e}")
-        await message.answer("⚠️ Error opening admin panel.")
+        await message.answer("⚠️ Admin panelini ochishda xatolik yuz berdi.")
 
 async def show_cars_status_message(message: Message):
     if not is_sheets_configured():
@@ -57,18 +63,16 @@ async def show_cars_status_message(message: Message):
         return
         
     text = "🚛 **Haydovchilar holati (Real-time):**\n\n"
-    from core.db import get_driver_stats
     
     for d in data:
-        tid = d.get('telegram_id')
+        dtid = d.get('telegram_id')
         active_c, today_c, total_c = 0, 0, 0
-        if tid:
-            active_c, today_c, total_c = await asyncio.to_thread(get_driver_stats, int(tid))
+        if dtid:
+            active_c, today_c, total_c = await asyncio.to_thread(get_driver_stats, int(dtid))
             
         status_icon = "🟢" if active_c == 0 else "🟡" if active_c < 3 else "🔴"
         text += f"{status_icon} **{d['car_number']}** — {d['driver_name']}\n"
-        tid_display = tid if tid else "Noma'lum"
-        text += f"   ├ 🆔 TID: `{tid_display}`\n"
+        text += f"   ├ 🆔 TID: `{dtid or 'Noma\\'lum'}`\n"
         text += f"   ├ 🔄 Aktiv: {active_c}/3\n"
         text += f"   └ 📊 Reyslar: Bugun: {today_c} | Jami: {total_c}\n\n"
     
@@ -77,7 +81,6 @@ async def show_cars_status_message(message: Message):
 
 @router.callback_query(F.data == "adm_cars_status")
 async def show_cars_status_callback(callback: CallbackQuery):
-    logger.info("Admin callback received: adm_cars_status")
     await callback.answer()
     await show_cars_status_message(callback.message)
 
@@ -87,8 +90,7 @@ async def refresh_admin_panel(callback: CallbackQuery):
     user = get_user(tid)
     lang = user.get('language') if user else 'uz_latin'
     
-    logger.info("Admin callback received: adm_refresh")
-    await callback.answer(_('confirm', lang) + " ✅")
+    await callback.answer("Yangilandi ✅")
     try:
         await callback.message.edit_reply_markup(reply_markup=kb.get_admin_panel_kb(lang))
     except:
@@ -101,9 +103,13 @@ async def close_admin(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm_back")
 async def back_to_admin(callback: CallbackQuery, state: FSMContext):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     await state.clear()
-    await callback.message.edit_text("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
+    await callback.message.edit_text(_('admin_panel', lang) + ":", reply_markup=kb.get_admin_panel_kb(lang))
 
 @router.callback_query(F.data == "adm_hist_car")
 async def show_cars(callback: CallbackQuery):
@@ -140,8 +146,8 @@ async def select_car_date(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("drv_"))
 async def select_drv_date(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    tid = callback.data.split("drv_")[1]
-    await state.update_data(filter_type='drv', filter_val=tid)
+    dtid = callback.data.split("drv_")[1]
+    await state.update_data(filter_type='drv', filter_val=dtid)
     await callback.message.edit_text(f"👤 Haydovchi sana oralig'ini tanlang:", reply_markup=kb.get_date_range_kb())
 
 @router.callback_query(F.data.startswith("dt_"))

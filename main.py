@@ -37,7 +37,7 @@ async def main():
             
             # Daily ranking at 22:00
             from core.scheduler import send_daily_ranking_job
-            scheduler.add_job(send_daily_ranking_job, 'cron', hour=22, minute=0, args=[bot])
+            scheduler.add_job(send_daily_ranking_job, 'cron', hour=22, minute=0, timezone='Asia/Tashkent', args=[bot])
             
             scheduler.start()
         except Exception as e:
