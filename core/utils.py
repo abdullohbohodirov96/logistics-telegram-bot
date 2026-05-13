@@ -61,3 +61,25 @@ def get_order_start_time(order, steps):
             if s.get('created_at'):
                 return parse_dt(s['created_at'])
     return None
+
+def get_seconds_diff(start, end):
+    """
+    Calculates difference in seconds between two timestamps.
+    Supports datetime objects and ISO strings.
+    """
+    try:
+        if start is None or end is None:
+            return 0
+            
+        dt1 = start if isinstance(start, datetime) else parse_dt(str(start))
+        dt2 = end if isinstance(end, datetime) else parse_dt(str(end))
+        
+        if not dt1 or not dt2:
+            return 0
+            
+        diff = (dt2 - dt1).total_seconds()
+        return max(0, int(diff))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error in get_seconds_diff: {e}")
+        return 0
