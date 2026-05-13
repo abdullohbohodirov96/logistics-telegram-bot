@@ -8,12 +8,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from core.config import ADMIN_IDS, TIMEZONE, is_sheets_configured
-from core.db import get_history, get_active_orders
-from core.cache import cache_get, cache_set
+from core.db import get_history, get_active_orders, get_user
 import core.keyboards as kb
 from core.sheets import get_drivers_status_list, get_all_drivers_list, get_all_cars_list
 from core.states import AdminProcess
 from core.handlers.history import format_delivery_short
+from core.i18n import _
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -35,10 +35,10 @@ async def admin_panel(message: Message):
     
     try:
         logger.info(f"Admin panel opened by user_id: {tid}")
-        await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
+        await message.answer(_('admin_panel', lang), reply_markup=kb.get_admin_panel_kb(lang))
     except Exception as e:
         logger.error(f"Error opening admin panel: {e}")
-        await message.answer("⚠️ Admin panelini ochishda xatolik yuz berdi.")
+        await message.answer("⚠️ Error opening admin panel.")
 
 async def show_cars_status_message(message: Message):
     if not is_sheets_configured():
@@ -83,10 +83,14 @@ async def show_cars_status_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm_refresh")
 async def refresh_admin_panel(callback: CallbackQuery):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     logger.info("Admin callback received: adm_refresh")
-    await callback.answer("Yangilandi ✅")
+    await callback.answer(_('confirm', lang) + " ✅")
     try:
-        await callback.message.edit_reply_markup(reply_markup=kb.get_admin_panel_kb())
+        await callback.message.edit_reply_markup(reply_markup=kb.get_admin_panel_kb(lang))
     except:
         pass
 

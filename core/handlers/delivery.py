@@ -30,24 +30,30 @@ def get_seconds_diff(start_iso, end_iso):
         return int((e - s).total_seconds())
     except: return None
 
-def build_interim_report(order):
+def build_interim_report(order, lang="uz_latin"):
     order_id = order.get('order_id', '-')
     stage_history = order.get('stage_history') or []
     
     # Create a map for quick access
     history_map = {item['stage']: item for item in stage_history}
     
-    def get_stage_status(label):
-        item = history_map.get(label)
+    def get_stage_status(label_key):
+        label = _(label_key, lang)
+        item = history_map.get(label) # History map keys are actual labels saved in DB
+        # However, it's safer to check for common keys or translated keys
+        # For blocks, we usually save "A-blok", "B-blok" etc. 
+        # I'll check both keys.
+        item = history_map.get(label) or history_map.get(label_key.replace("stage_", "").capitalize() + "-blok")
+        
         if item:
             return f"{item.get('emoji', '✅')} {item.get('status', 'ORTDI')} ({item.get('completed_at', '-')})"
-        return "⏳ Tanlanmagan"
+        return _("not_selected", lang)
 
     # Build transits section
     transits_text = ""
-    transits = [item for item in stage_history if item['stage'].startswith("Transit")]
+    transits = [item for item in stage_history if item['stage'].startswith("Transit") or item['stage'].startswith("Транзит")]
     if not transits:
-        transits_text = f"🚚 Transit: {get_status_icon(order.get('transit_status'))}"
+        transits_text = f"🚚 {_('transit', lang)}: {get_status_icon(order.get('transit_status'))}"
     else:
         for t in transits:
             transits_text += f"{t.get('emoji', '✅')} {t['stage']}: {t['status']} ({t['completed_at']})\n"
@@ -55,18 +61,18 @@ def build_interim_report(order):
 
     text = (
         f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
-        f"📍 **Manzil:** {order.get('address', '-')}\n"
-        f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-        f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
+        f"📍 **{_('address', lang)}:** {order.get('address', '-')}\n"
+        f"📦 **{_('cargo', lang)}:** {order.get('cargo', '-')}\n"
+        f"👤 **{_('driver', lang)}:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🏗 **Yuklash:**\n"
-        f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
-        f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
-        f"©️ C-blok: {get_stage_status('C-blok')}\n"
-        f"🇩 D-blok: {get_stage_status('D-blok')}\n"
+        f"🅰️ {_('stage_a', lang)}: {get_stage_status('stage_a')}\n"
+        f"🅱️ {_('stage_b', lang)}: {get_stage_status('stage_b')}\n"
+        f"©️ {_('stage_c', lang)}: {get_stage_status('stage_c')}\n"
+        f"🇩 {_('stage_d', lang)}: {get_stage_status('stage_d')}\n"
         f"{transits_text}\n\n"
         f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
-        f"⏰ **Boshlandi:** {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
+        f"⏰ **{_('started', lang)}:** {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
     )
     return text
 
@@ -74,7 +80,9 @@ async def update_group_report(bot: Bot, order_id: str):
     if not GROUP_CHAT_ID or str(GROUP_CHAT_ID) == "0": return
     order = await asyncio.to_thread(get_order, order_id)
     if not order or order.get('current_status') == 'YAKUNLANDI': return
-    text = build_interim_report(order)
+    
+    # Group report always in Latin or default
+    text = build_interim_report(order, lang="uz_latin")
     try:
         msg_id = order.get('group_message_id')
         if msg_id:
@@ -115,17 +123,20 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
     order_id = callback.data.split("_")[1]
     logger.info(f"Take delivery clicked: order_id={order_id}, user={tid}, active={active_count}")
     
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await state.update_data(order_id=order_id, stage_history=[])
     await state.set_state(DeliveryStates.BLOCK_MENU)
     
     try:
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\n📦 **Bloklardan yuk olish**\n\n"
-            f"🅰️ A-blok: ⏳ Tanlanmagan\n"
-            f"🅱️ B-blok: ⏳ Tanlanmagan\n"
-            f"©️ C-blok: ⏳ Tanlanmagan\n"
-            f"🇩 D-blok: ⏳ Tanlanmagan",
-            reply_markup=kb.get_block_menu_kb(order_id, [])
+            f"📦 **{_('order_accepted', lang)}**\n\n🆔 #{order_id}\n\n📦 **{_('stages', lang)}**\n\n"
+            f"🅰️ {_('stage_a', lang)}: {_('not_selected', lang)}\n"
+            f"🅱️ {_('stage_b', lang)}: {_('not_selected', lang)}\n"
+            f"©️ {_('stage_c', lang)}: {_('not_selected', lang)}\n"
+            f"🇩 {_('stage_d', lang)}: {_('not_selected', lang)}",
+            reply_markup=kb.get_block_menu_kb(order_id, {}, lang)
         )
     except Exception: pass
     
@@ -141,6 +152,9 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
 
 @router.callback_query(F.data.startswith("sel_block_"))
 async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
     await callback.answer()
     parts = callback.data.split("_")
     letter, order_id = parts[2], parts[3]
@@ -155,42 +169,48 @@ async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
         
     await state.set_state(DeliveryStates.BLOCK_SUBMENU)
     try:
+        label = _(f"stage_{letter.lower()}", lang)
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\n"
-            f"**{letter}-blok**\n\n"
+            f"📦 **{_('id', lang)} #{order_id}**\n\n"
+            f"**{label}**\n\n"
             f"Ushbu blokdan yuk oldingizmi?",
-            reply_markup=kb.get_block_selection_kb(letter, order_id)
+            reply_markup=kb.get_block_selection_kb(letter, order_id, lang)
         )
     except Exception: pass
 
 @router.callback_query(F.data.startswith("block_act_"))
 async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     parts = callback.data.split("_")
     letter, status_type, order_id = parts[2], parts[3], parts[4]
-    now = get_now()
     
+    status = "ORTDI" if status_type == "ortdi" else "ORTMADI"
+    emoji = "✅" if status_type == "ortdi" else "❌"
+    color = "green" if status_type == "ortdi" else "red"
+    
+    now = get_now()
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     
     # Calculate duration
     if not stage_history:
-        # First block: from accepted_at
         order = await asyncio.to_thread(get_order, order_id)
         start_time = parse_dt(order.get('accepted_at')) or now
     else:
-        # Subsequent blocks: from previous block in history
-        last_item = stage_history[-1]
-        # We need the full timestamp of the last item. We'll store it in FSM data.
         start_time = data.get('last_block_time') or now
 
     duration_seconds = int((now - start_time).total_seconds())
+    label = _(f"stage_{letter.lower()}", lang)
     
-    # If block already exists, remove it (we'll re-append it to the end as "latest")
-    stage_history = [item for item in stage_history if item['stage'] != f"{letter}-blok"]
+    # Re-append if exists
+    stage_history = [item for item in stage_history if item['stage'] != label]
     
     new_entry = {
-        "stage": f"{letter}-blok",
+        "stage": label,
         "status": status,
         "emoji": emoji,
         "color": color,
@@ -216,25 +236,30 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
     
     # Show menu again
     history_map = {item['stage']: item for item in stage_history}
-    def get_stage_status(label):
-        item = history_map.get(label)
+    def get_stage_status(label_key):
+        l = _(label_key, lang)
+        item = history_map.get(l)
         if item:
             return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
-        return "⏳ Tanlanmagan"
+        return _("not_selected", lang)
 
     try:
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
-            f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
-            f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
-            f"©️ C-blok: {get_stage_status('C-blok')}\n"
-            f"🇩 D-blok: {get_stage_status('D-blok')}",
-            reply_markup=kb.get_block_menu_kb(order_id, stage_history)
+            f"📦 **{_('id', lang)} #{order_id}**\n\n📦 **{_('stages', lang)}**\n\n"
+            f"🅰️ {_('stage_a', lang)}: {get_stage_status('stage_a')}\n"
+            f"🅱️ {_('stage_b', lang)}: {get_stage_status('stage_b')}\n"
+            f"©️ {_('stage_c', lang)}: {get_stage_status('stage_c')}\n"
+            f"🇩 {_('stage_d', lang)}: {get_stage_status('stage_d')}",
+            reply_markup=kb.get_block_menu_kb(order_id, history_map, lang)
         )
     except Exception: pass
 
 @router.callback_query(F.data.startswith("block_back_"))
 async def handle_block_back(callback: CallbackQuery, state: FSMContext):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     order_id = callback.data.split("_")[2]
     data = await state.get_data()
@@ -243,41 +268,44 @@ async def handle_block_back(callback: CallbackQuery, state: FSMContext):
     await state.set_state(DeliveryStates.BLOCK_MENU)
     
     history_map = {item['stage']: item for item in stage_history}
-    def get_stage_status(label):
-        item = history_map.get(label)
+    def get_stage_status(label_key):
+        l = _(label_key, lang)
+        item = history_map.get(l)
         if item:
             return f"{item.get('emoji')} {item.get('status')} ({item.get('completed_at')})"
-        return "⏳ Tanlanmagan"
+        return _("not_selected", lang)
 
     try:
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
-            f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
-            f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
-            f"©️ C-blok: {get_stage_status('C-blok')}\n"
-            f"🇩 D-blok: {get_stage_status('D-blok')}",
-            reply_markup=kb.get_block_menu_kb(order_id, stage_history)
+            f"📦 **{_('id', lang)} #{order_id}**\n\n📦 **{_('stages', lang)}**\n\n"
+            f"🅰️ {_('stage_a', lang)}: {get_stage_status('stage_a')}\n"
+            f"🅱️ {_('stage_b', lang)}: {get_stage_status('stage_b')}\n"
+            f"©️ {_('stage_c', lang)}: {get_stage_status('stage_c')}\n"
+            f"🇩 {_('stage_d', lang)}: {get_stage_status('stage_d')}",
+            reply_markup=kb.get_block_menu_kb(order_id, history_map, lang)
         )
     except Exception: pass
 
 @router.callback_query(F.data.startswith("confirm_blocks_"))
-async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data.startswith("tr_start_"))
+async def handle_tr_start(callback: CallbackQuery, state: FSMContext):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     order_id = callback.data.split("_")[2]
-    data = await state.get_data()
-    stage_history = data.get('stage_history') or []
-    
-    if len(stage_history) < 4:
-        await callback.answer("Avval A/B/C/D bloklarning hammasini belgilang", show_alert=True)
-        return
-        
     await state.set_state(DeliveryStates.TRANSIT)
     try:
-        await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
+        await callback.message.edit_text(f"📦 **{_('id', lang)} #{order_id}**\n\nSavol: **{_('transit', lang)} yuk oldingizmi?**", reply_markup=kb.get_transit_kb(order_id, lang))
     except Exception: pass
 
-@router.callback_query(F.data.startswith("tr_"))
+@router.callback_query(F.data.startswith("tr_oldi_") | F.data.startswith("tr_olmadim_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     data = await state.get_data()
     order_id = data.get('order_id')
@@ -291,7 +319,7 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     if "tr_oldi_" in callback.data:
         status = "OLDI"
         emoji = "✅"
-        label = "Transit 1"
+        label = f"{_('transit', lang)} 1"
         
         new_entry = {
             "stage": label,
@@ -309,21 +337,16 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
         
         try:
             await callback.message.edit_text(
-                f"📦 **Buyurtma #{order_id}**\n\n"
-                f"🚚 **2-transitingiz bormi?**",
-                reply_markup=kb.get_transit_extra_kb(2, order_id)
+                f"📦 **{_('id', lang)} #{order_id}**\n\n"
+                f"🚚 **2-{_('transit', lang)}ingiz bormi?**",
+                reply_markup=kb.get_transit_extra_kb(2, order_id, lang)
             )
         except Exception: pass
-        
-        async def process_tr():
-            await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': status})
-            await update_group_report(bot, order_id)
-        asyncio.create_task(process_tr())
         
     else: # OLMADI
         status = "OLMADI"
         emoji = "❌"
-        label = "Transit"
+        label = _('transit', lang)
         
         new_entry = {
             "stage": label,
@@ -340,16 +363,20 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         
         try:
-            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+            await callback.message.edit_text(f"📦 **{_('id', lang)} #{order_id}**\n\n📸 **{_('send_photo', lang)}**")
         except Exception: pass
         
-        async def process_tr():
-            await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': status})
-            await update_group_report(bot, order_id)
-        asyncio.create_task(process_tr())
+    async def process_tr():
+        await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': status})
+        await update_group_report(bot, order_id)
+    asyncio.create_task(process_tr())
 
-@router.callback_query(F.data.startswith("tr_extra_"))
+@router.callback_query(F.data.startswith("tr_oldi_") | F.data.startswith("tr_stop_"))
 async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     parts = callback.data.split("_")
     action, num, order_id = parts[2], int(parts[3]), parts[4]
@@ -358,20 +385,20 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
     stage_history = data.get('stage_history') or []
     now = get_now()
     
-    if action == "yoq":
+    if action == "stop":
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
-            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+            await callback.message.edit_text(f"📦 **{_('id', lang)} #{order_id}**\n\n📸 **{_('send_photo', lang)}**")
         except Exception: pass
         return
 
-    # If action is "ha"
+    # If action is "ha" (tr_oldi_)
     last_block_time = data.get('last_block_time') or now
     duration_seconds = int((now - last_block_time).total_seconds())
     
     status = "OLDI"
     emoji = "✅"
-    label = f"Transit {num}"
+    label = f"{_('transit', lang)} {num}"
     
     new_entry = {
         "stage": label,
@@ -391,16 +418,16 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
         next_num = num + 1
         try:
             await callback.message.edit_text(
-                f"📦 **Buyurtma #{order_id}**\n\n"
-                f"🚚 **{next_num}-transitingiz bormi?**",
-                reply_markup=kb.get_transit_extra_kb(next_num, order_id)
+                f"📦 **{_('id', lang)} #{order_id}**\n\n"
+                f"🚚 **{next_num}-{_('transit', lang)}ingiz bormi?**",
+                reply_markup=kb.get_transit_extra_kb(next_num, order_id, lang)
             )
         except Exception: pass
     else:
         # Limit reached (4 transits)
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
-            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+            await callback.message.edit_text(f"📦 **{_('id', lang)} #{order_id}**\n\n📸 **{_('send_photo', lang)}**")
         except Exception: pass
 
     async def process_tr_extra():
@@ -410,16 +437,22 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
 
 @router.message(DeliveryStates.LOADED_PHOTO, F.photo | F.document)
 async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     order = await asyncio.to_thread(get_order, order_id)
     if not order:
-        await message.answer("❌ Buyurtma topilmadi. Iltimos, qaytadan urinib ko'ring.")
+        await message.answer(_('order_not_found', lang))
         return
     await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
     await state.set_state(DeliveryStates.ON_WAY)
     addr = order.get('address', '-')
-    await message.answer(f"✅ Rasm qabul qilindi.\n\n📍 **Manzil:** {addr}\n\n**Yo'lga chiqdingizmi?**", reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}"))
+    
+    msg_text = f"✅ {_('lang_saved', lang).replace('Til ', 'Rasm ')}\n\n📍 **{_('address', lang)}:** {addr}\n\n**{_('on_way', lang)}mi?**"
+    await message.answer(msg_text, reply_markup=kb.get_step_kb(_('on_way_btn', lang), f"step_way_{order_id}"))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.LOADED_PHOTO)
@@ -428,11 +461,17 @@ async def loaded_photo_wrong_input(message: Message):
 
 @router.callback_query(F.data.startswith("step_way_"))
 async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     if not order_id: return
     await state.set_state(DeliveryStates.ACT_PHOTO)
-    try: await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nMijoz manziliga yetib borgach akt rasmini yuboring:\n\n📄 **Qo'l qo'ydirilgan akt rasmini yuboring**")
+    try: 
+        msg_text = f"📦 **{_('id', lang)} #{order_id}**\n\nMijoz manziliga yetib borgach akt rasmini yuboring:\n\n📄 **{_('act_photo', lang)}ни yuboring**"
+        await callback.message.edit_text(msg_text)
     except Exception: pass
     
     async def process_way():
@@ -443,15 +482,19 @@ async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.message(DeliveryStates.ACT_PHOTO, F.photo | F.document)
 async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     file_id = message.photo[-1].file_id if message.photo else message.document.file_id
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     order = await asyncio.to_thread(get_order, order_id)
     if not order:
-        await message.answer("❌ Buyurtma topilmadi.")
+        await message.answer(_('order_not_found', lang))
         return
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
     await state.set_state(DeliveryStates.DELIVERED_LOC)
-    await message.answer(f"✅ Akt qabul qilindi.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    await message.answer(f"✅ {_('act_photo', lang)} {_('lang_saved', lang).split('muvaf')[0].lower()}ilindi.\n\n📍 **{_('delivered_loc', lang)}ni yuboring**", reply_markup=kb.get_location_kb(lang))
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.ACT_PHOTO)
@@ -460,13 +503,17 @@ async def act_photo_wrong_input(message: Message):
 
 @router.message(DeliveryStates.DELIVERED_LOC, F.location)
 async def handle_delivered_location(message: Message, state: FSMContext, bot: Bot):
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     if not order_id: return
     
     m = await message.answer("✅", reply_markup=ReplyKeyboardRemove())
     await m.delete()
     await state.set_state(DeliveryStates.WAITING_FINISH)
-    await message.answer(f"✅ Lokatsiya qabul qilindi.\n\nBuyurtmani yakunlash uchun tugmani bosing:", reply_markup=kb.get_step_kb("✅ Buyurtmani yakunlash", f"final_done_{order_id}"))
+    await message.answer(f"✅ {_('location', lang)} {_('lang_saved', lang).split('muvaf')[0].lower()}ilindi.\n\n🏁 **{_('finish_order', lang)}**", reply_markup=kb.get_finish_kb(order_id, lang))
     
     async def process_loc():
         await asyncio.to_thread(update_order, order_id, {'delivered_lat': message.location.latitude, 'delivered_lng': message.location.longitude, 'delivered_location_at': now})
@@ -475,7 +522,10 @@ async def handle_delivered_location(message: Message, state: FSMContext, bot: Bo
 
 @router.message(DeliveryStates.DELIVERED_LOC)
 async def delivered_loc_wrong_input(message: Message):
-    await message.answer("❌ Iltimos, faqat lokatsiya yuboring.", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    await message.answer(_('error_wrong_input', lang), reply_markup=kb.get_location_kb(lang))
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -536,12 +586,13 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         history_lines.append(line)
     
     # Other stages (sequential after blocks and transits)
-    def get_emoji_line(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
+    def get_emoji_line(label_key, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
+        label = _(label_key, lang)
         if dt2:
             d_str = format_duration_detailed(get_seconds_diff(dt1, dt2))
             dt_formatted = parse_dt(dt2).strftime('%H:%M') if parse_dt(dt2) else ""
             is_ok = (status == success_val) if status else True
-            st_text = status if status else ("YUBORILDI" if "Lokatsiya" in label else "OLINDI" if "rasmi" in label else "BOSILDI")
+            st_text = status if status else ("YUBORILDI" if "location" in label_key else "OLINDI" if "photo" in label_key else "BOSILDI")
             icon = ok_icon if is_ok else fail_icon
             color = emoji_ok if is_ok else emoji_fail
             return f"{color} {label}: {icon} {st_text} — {d_str} ({dt_formatted})"
@@ -551,16 +602,16 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     # Last action time for next duration calculation
     last_action_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
     
-    line_yuk = get_emoji_line("Yuk rasmi", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
-    line_way = get_emoji_line("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
-    line_act = get_emoji_line("Akt rasmi", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
-    line_loc = get_emoji_line("Lokatsiya", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
+    line_yuk = get_emoji_line("loaded_photo", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
+    line_way = get_emoji_line("on_way", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
+    line_act = get_emoji_line("act_photo", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
+    line_loc = get_emoji_line("location", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
 
     history_lines.extend([line_yuk, line_way, line_act, line_loc])
     etaplar_text = "\n".join(history_lines)
 
-    drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
-               f"📋 **Etaplar:**\n"
+    drv_msg = (f"✅ **{_('finished', lang)}**\n\n🆔 {_('id', lang)}: #{order_id}\n⏰ {_('started', lang)}: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 {_('finished', lang)}: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ {_('total_time', lang)}: {d_total}\n\n"
+               f"📋 **{_('stages', lang)}:**\n"
                f"{etaplar_text}\n")
     
     try: await callback.message.edit_text(drv_msg, parse_mode="Markdown")
@@ -578,12 +629,12 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
             
             maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
             
-            grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
-                        f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n🚘 **Mashina:** {order.get('car_number', '-')}\n"
-                        f"📍 **Manzil:** {order.get('address', '-')}\n📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
-                        f"📋 **Etaplar:**\n"
+            grp_text = (f"✅ **{_('finished', 'uz_latin')}**\n\n🆔 {_('id', 'uz_latin')}: #{order_id}\n⏰ {_('started', 'uz_latin')}: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 {_('finished', 'uz_latin')}: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ {_('total_time', 'uz_latin')}: {d_total}\n\n"
+                        f"👤 **{_('driver', 'uz_latin')}:** {order.get('driver_name', '-')}\n🚘 **{_('car', 'uz_latin')}:** {order.get('car_number', '-')}\n"
+                        f"📍 **{_('address', 'uz_latin')}:** {order.get('address', '-')}\n📍 **{_('delivered_loc', 'uz_latin')}:** [Google Maps]({maps_url})\n\n📦 **{_('cargo', 'uz_latin')}:** {order.get('cargo', '-')}\n📝 **{_('comment', 'uz_latin')}:** {order.get('comment', '-')}\n\n"
+                        f"📋 **{_('stages', 'uz_latin')}:**\n"
                         f"{etaplar_text}\n\n"
-                        f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
+                        f"🟢 **{_('car_free', 'uz_latin')}:** {order.get('car_number', '-')}")
             
             media = [
                 InputMediaPhoto(media=order['loaded_photo_file_id'], caption=grp_text, parse_mode="Markdown"),
