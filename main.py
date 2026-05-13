@@ -35,9 +35,9 @@ async def main():
             scheduler = AsyncIOScheduler()
             scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
             
-            # Daily ranking at 22:00
-            from core.scheduler import send_daily_ranking_job
-            scheduler.add_job(send_daily_ranking_job, 'cron', hour=22, minute=0, timezone='Asia/Tashkent', args=[bot])
+            # Daily report at 22:00 PM
+            from core.scheduler import send_daily_report_job
+            scheduler.add_job(send_daily_report_job, 'cron', hour=22, minute=0, args=[bot])
             
             scheduler.start()
         except Exception as e:

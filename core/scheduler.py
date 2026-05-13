@@ -64,12 +64,14 @@ async def check_sheets_job(bot: Bot):
                     await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID')
                     continue
 
-                # Check 3-order limit
-                from core.db import count_active_orders
-                active_count = await asyncio.to_thread(count_active_orders, telegram_id)
+                # 3 ACTIVE ORDERS LIMIT CHECK
+                from core.db import get_active_orders_count
+                active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
                 if active_count >= 3:
-                    logger.warning(f"⚠️ Driver '{car_number}' has {active_count} active orders. Limit reached.")
-                    await asyncio.to_thread(update_order_status, order['row_index'], 'BUSY (3 ORDERS)')
+                    logger.warning(f"⚠️ Driver '{car_number}' has {active_count} active orders. Skipping Order #{order_id}.")
+                    # Optional: Notify admin or update sheet with specific error
+                    await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_BUSY_3')
+                    # Notify the driver too? Usually not, just skip.
                     continue
 
                 # Send to Driver
@@ -109,47 +111,80 @@ async def check_sheets_job(bot: Bot):
     except Exception as e:
         logger.error(f"❌ Critical error in check_sheets_job: {e}")
 
-async def send_daily_ranking_job(bot: Bot):
+async def send_daily_report_job(bot: Bot):
     try:
         from datetime import datetime, timedelta
         import pytz
         from core.config import GROUP_CHAT_ID, TIMEZONE
         from core.db import get_orders_by_date_range
+        from core.utils import get_seconds_diff
         
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         
-        # Today from 00:00:00 to now
+        # User requested: "Har kuni ... 22:00 da ... faqat bugun yakunlangan zakazlar"
         start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt = now.replace(hour=23, minute=59, second=59, microsecond=0)
         
         orders = await asyncio.to_thread(get_orders_by_date_range, start_dt.isoformat(), end_dt.isoformat())
-        
-        if not GROUP_CHAT_ID: return
-
         if not orders:
-            await bot.send_message(chat_id=GROUP_CHAT_ID, text="Bugun yakunlangan reyslar yo'q.")
+            if GROUP_CHAT_ID:
+                await bot.send_message(chat_id=GROUP_CHAT_ID, text="📉 **Bugun yakunlangan reyslar yo'q.**")
+            logger.info("No orders found for today's daily report.")
             return
             
-        stats = {} # {tid: {name, car, count}}
+        stats = {} # {telegram_id: {name, car, count, total_seconds}}
         for o in orders:
             tid = o.get('driver_telegram_id')
             if not tid: continue
-            if tid not in stats:
-                stats[tid] = {'name': o.get('driver_name', '-'), 'car': o.get('car_number', '-'), 'count': 0}
-            stats[tid]['count'] += 1
             
+            if tid not in stats:
+                stats[tid] = {
+                    'name': o.get('driver_name', '-'),
+                    'car': o.get('car_number', '-'),
+                    'count': 0,
+                    'total_seconds': 0
+                }
+            
+            stats[tid]['count'] += 1
+            diff = get_seconds_diff(o.get('accepted_at'), o.get('completed_at'))
+            if diff:
+                stats[tid]['total_seconds'] += diff
+        
+        # Sort for ranking
         ranking = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
         
-        msg = "🏆 **Kunlik reyting**\n\n"
-        emojis = ["🥇", "🥈", "🥉"]
+        # Build Group Message
+        msg_group = f"🏆 **Kunlik reyting ({now.strftime('%d.%m.%Y')})**\n\n"
         
+        emojis = ["🥇", "🥈", "🥉"]
         for i, (tid, s) in enumerate(ranking):
-            prefix = emojis[i] if i < 3 else "🔹"
-            msg += f"{prefix} {s['car']} — {s['name']} — {s['count']} reys\n"
+            if i < 3:
+                msg_group += f"{emojis[i]} **{s['car']}** — {s['name']} — {s['count']} reys\n"
+            else:
+                msg_group += f"{i+1}. **{s['car']}** — {s['name']} — {s['count']} reys\n"
             
-        await bot.send_message(chat_id=GROUP_CHAT_ID, text=msg, parse_mode="Markdown")
-        logger.info("Daily ranking report sent.")
+            # Private stats for driver (user request: "lichkasiga kunlik reysini tashsin")
+            avg_min = (s['total_seconds'] / s['count'] / 60) if s['count'] > 0 else 0
+            msg_private = (
+                f"📊 **KUNLIK HISOBOTINGIZ ({now.strftime('%d.%m.%Y')})**\n\n"
+                f"✅ **Reyslar soni:** {s['count']}\n"
+                f"⏱ **O'rtacha vaqt:** {int(avg_min)} minut\n"
+            )
+            if i < 3:
+                msg_private += f"\nTabriklaymiz! Siz bugungi reytingda {i+1}-orinni egalladingiz! 🎊"
+                
+            try:
+                await bot.send_message(chat_id=tid, text=msg_private, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Failed to send private report to {tid}: {e}")
+        
+        if GROUP_CHAT_ID:
+            try:
+                await bot.send_message(chat_id=GROUP_CHAT_ID, text=msg_group, parse_mode="Markdown")
+                logger.info("Daily report sent to group.")
+            except Exception as e:
+                logger.error(f"Failed to send daily report to group: {e}")
                 
     except Exception as e:
-        logger.error(f"Error in send_daily_ranking_job: {e}")
+        logger.error(f"Error in send_daily_report_job: {e}")

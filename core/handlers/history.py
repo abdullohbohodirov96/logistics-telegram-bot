@@ -3,10 +3,9 @@ import time
 import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from core.db import get_history, get_order, get_user
+from core.db import get_history, get_order, get_order_steps
 import core.keyboards as kb
 from core.utils import parse_dt, format_time, format_duration, get_order_start_time
-from core.i18n import _
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -74,6 +73,7 @@ def format_delivery_detailed(order, steps=None):
     for item in stage_history:
         text += f"{item.get('emoji', '✅')} {item['stage']}: {item['status']} — {format_duration_detailed(item.get('duration_seconds'))} ({item.get('completed_at', '-')})\n"
         
+    # Extra stages
     def get_stage_info(label, dt_key):
         dt = order.get(dt_key)
         if dt:
@@ -86,13 +86,10 @@ def format_delivery_detailed(order, steps=None):
     text += get_stage_info("Lokatsiya", "delivered_location_at")
     return text
 
-@router.message(F.text.in_({"📋 Mening tarixim", "📋 Менинг тарихим"}))
+@router.message(F.text == "📋 Mening tarixim")
 async def my_history(message: Message):
     t0 = time.time()
     tid = message.from_user.id
-    user = get_user(tid)
-    lang = user.get('language') if user else 'uz_latin'
-    
     history = await asyncio.to_thread(get_history, 'drv', str(tid))
     if not history:
         await message.answer("Sizda hali tarix yo'q.")
@@ -102,8 +99,9 @@ async def my_history(message: Message):
     total_pages = (len(history) + 4) // 5
     items = history[:5]
     
-    await message.answer(_('my_history', lang) + ":")
+    await message.answer("📋 Mening tarixim:")
     for order in items:
+        # Pass steps=None to let it fetch inside, but wrap in thread
         text = await asyncio.to_thread(format_delivery_short, order)
         await message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
@@ -115,7 +113,8 @@ async def my_history(message: Message):
 async def paginate_my_history(callback: CallbackQuery):
     t0 = time.time()
     await callback.answer()
-    page = int(callback.data.split(":")[2])
+    action, page_str = callback.data.split(":")[1:]
+    page = int(page_str)
     tid = callback.from_user.id
     history = await asyncio.to_thread(get_history, 'drv', str(tid))
     

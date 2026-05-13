@@ -107,7 +107,7 @@ def get_unique_drivers():
 def get_active_orders():
     try:
         if not supabase: return []
-        response = supabase.table('orders').select('*').neq('current_status', 'DONE').order('created_at', desc=True).limit(50).execute()
+        response = supabase.table('orders').select('*').neq('current_status', 'YAKUNLANDI').order('created_at', desc=True).limit(50).execute()
         return response.data
     except Exception as e:
         logger.error(f"Error getting active orders: {e}")
@@ -152,12 +152,12 @@ def get_dashboard_stats():
         now = datetime.datetime.now(tz)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         
-        # Active orders (not DONE, not ERROR)
-        active_resp = supabase.table('orders').select('id', count='exact').neq('current_status', 'DONE').neq('current_status', 'ERROR_BOT_BLOCKED').execute()
+        # Active orders (not YAKUNLANDI, not ERROR)
+        active_resp = supabase.table('orders').select('id', count='exact').neq('current_status', 'YAKUNLANDI').neq('current_status', 'ERROR_BOT_BLOCKED').execute()
         active_count = active_resp.count if active_resp.count else 0
         
         # Finished today
-        finished_resp = supabase.table('orders').select('id', count='exact').eq('current_status', 'DONE').gte('completed_at', today_start).execute()
+        finished_resp = supabase.table('orders').select('id', count='exact').eq('current_status', 'YAKUNLANDI').gte('completed_at', today_start).execute()
         finished_count = finished_resp.count if finished_resp.count else 0
         
         failed_resp = supabase.table('orders').select('id', count='exact').eq('current_status', 'ERROR_BOT_BLOCKED').execute()
@@ -185,51 +185,80 @@ def get_orders_by_date_range(start_iso: str, end_iso: str):
         logger.error(f"Error getting orders by date range: {e}")
         return []
 
-def upsert_user(tid: int, full_name: str, username: str, language: str = None):
-    try:
-        if not supabase: return
-        data = {
-            'telegram_id': tid,
-            'full_name': full_name,
-            'username': username
-        }
-        if language: data['language'] = language
-        supabase.table('users').upsert(data, on_conflict='telegram_id').execute()
-    except Exception as e:
-        logger.error(f"Error upserting user {tid}: {e}")
-
-def get_user(tid: int):
-    try:
-        if not supabase: return None
-        res = supabase.table('users').select('*').eq('telegram_id', tid).execute()
-        return res.data[0] if res.data else None
-    except Exception as e:
-        logger.error(f"Error getting user {tid}: {e}")
-        return None
-
-def count_active_orders(tid: int) -> int:
+def get_active_orders_count(driver_tid: int) -> int:
     try:
         if not supabase: return 0
-        # Active: assigned, in_progress, waiting_finish_photo (NOT YAKUNLANDI and NOT ERROR)
-        res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute()
-        return res.count if res.count else 0
+        response = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', driver_tid).neq('current_status', 'YAKUNLANDI').execute()
+        return response.count if response.count is not None else 0
     except Exception as e:
-        logger.error(f"Error counting active orders for {tid}: {e}")
+        logger.error(f"Error getting active orders count: {e}")
         return 0
 
-def get_driver_stats(tid: int):
-    """Returns (active_count, today_count, total_count)"""
+def get_today_completed_count(driver_tid: int) -> int:
     try:
-        if not supabase: return 0, 0, 0
-        import datetime, pytz
+        if not supabase: return 0
+        import datetime
+        import pytz
+        tz = pytz.timezone('Asia/Tashkent')
+        today_start = datetime.datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        response = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', driver_tid).eq('current_status', 'YAKUNLANDI').gte('completed_at', today_start).execute()
+        return response.count if response.count is not None else 0
+    except Exception as e:
+        logger.error(f"Error today completed count: {e}")
+        return 0
+
+def get_total_completed_count(driver_tid: int) -> int:
+    try:
+        if not supabase: return 0
+        response = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', driver_tid).eq('current_status', 'YAKUNLANDI').execute()
+        return response.count if response.count is not None else 0
+    except Exception as e:
+        logger.error(f"Error total completed count: {e}")
+        return 0
+
+def get_drivers_admin_stats():
+    """Returns a list of stats for all drivers who have had orders."""
+    try:
+        if not supabase: return []
+        # Get unique drivers from orders
+        resp = supabase.table('orders').select('car_number, driver_name, driver_telegram_id').execute()
+        if not resp.data: return []
+        
+        drivers = {}
+        for r in resp.data:
+            tid = r.get('driver_telegram_id')
+            if tid:
+                drivers[tid] = {'car': r.get('car_number', '-'), 'name': r.get('driver_name', '-')}
+        
+        # Get counts for today's completed orders
+        import datetime
+        import pytz
         tz = pytz.timezone('Asia/Tashkent')
         today_start = datetime.datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         
-        active = count_active_orders(tid)
-        today = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').gte('completed_at', today_start).execute()
-        total = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').execute()
-        
-        return active, (today.count or 0), (total.count or 0)
+        stats = []
+        for tid, info in drivers.items():
+            # Active count (not finished)
+            active_res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute()
+            active = active_res.count if active_res.count is not None else 0
+            
+            # Today completed
+            today_res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').gte('completed_at', today_start).execute()
+            today = today_res.count if today_res.count is not None else 0
+            
+            # Total completed
+            total_res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').execute()
+            total = total_res.count if total_res.count is not None else 0
+            
+            stats.append({
+                'car_number': info['car'],
+                'driver_name': info['name'],
+                'telegram_id': tid,
+                'active_count': active,
+                'today_count': today,
+                'total_count': total
+            })
+        return stats
     except Exception as e:
-        logger.error(f"Error getting driver stats for {tid}: {e}")
-        return 0, 0, 0
+        logger.error(f"Error getting admin stats: {e}")
+        return []
