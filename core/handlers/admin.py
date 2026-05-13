@@ -30,13 +30,17 @@ async def admin_panel(message: Message):
         await message.answer("Siz admin emassiz.")
         return
     
-    logger.info(f"Admin panel opened by user_id: {message.from_user.id}")
-    
-    if message.text == "/drivers":
-        await show_cars_status_message(message)
-        return
+    try:
+        logger.info(f"Admin panel opened by user_id: {message.from_user.id}")
+        
+        if message.text == "/drivers":
+            await show_cars_status_message(message)
+            return
 
-    await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
+        await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
+    except Exception as e:
+        logger.error(f"Error opening admin panel: {e}")
+        await message.answer("⚠️ Admin panelini ochishda xatolik yuz berdi.")
 
 async def show_cars_status_message(message: Message):
     if not is_sheets_configured():
