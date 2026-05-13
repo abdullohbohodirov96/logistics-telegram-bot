@@ -30,6 +30,10 @@ def get_seconds_diff(start_iso, end_iso):
         return int((e - s).total_seconds())
     except: return None
 
+def escape_html(text):
+    if not text: return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 def build_interim_report(order):
     order_id = order.get('order_id', '-')
     stage_history = order.get('stage_history') or []
@@ -40,8 +44,10 @@ def build_interim_report(order):
     def get_stage_status(label):
         item = history_map.get(label)
         if item:
-            return f"{item.get('emoji', '✅')} {item.get('status', 'ORTDI')} ({item.get('completed_at', '-')})"
-        return "⏳ Tanlanmagan"
+            status_val = item.get('status', 'ORTDI')
+            completed_at = item.get('completed_at', '-')
+            return f"<b>{item.get('emoji', '✅')} {escape_html(status_val)}</b> ({escape_html(completed_at)})"
+        return "<i>⏳ Tanlanmagan</i>"
 
     # Build transits section
     transits_text = ""
@@ -50,43 +56,50 @@ def build_interim_report(order):
         transits_text = f"🚚 Transit: {get_status_icon(order.get('transit_status'))}"
     else:
         for t in transits:
-            transits_text += f"{t.get('emoji', '✅')} {t['stage']}: {t['status']} ({t['completed_at']})\n"
+            transits_text += f"{t.get('emoji', '✅')} {escape_html(t['stage'])}: <b>{escape_html(t['status'])}</b> ({escape_html(t['completed_at'])})\n"
         transits_text = transits_text.strip()
 
     text = (
-        f"🚚 **LOGISTIKA HISOBOTI #{order_id}**\n"
-        f"📍 **Manzil:** {order.get('address', '-')}\n"
-        f"📦 **Yuk:** {order.get('cargo', '-')}\n"
-        f"👤 **Haydovchi:** {order.get('driver_name', '-')} ({order.get('car_number', '-')})\n"
+        f"🚚 <b>LOGISTIKA HISOBOTI #{escape_html(order_id)}</b>\n"
+        f"📍 <b>Manzil:</b> {escape_html(order.get('address', '-'))}\n"
+        f"📦 <b>Yuk:</b> {escape_html(order.get('cargo', '-'))}\n"
+        f"👤 <b>Haydovchi:</b> {escape_html(order.get('driver_name', '-'))} ({escape_html(order.get('car_number', '-'))})\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🏗 **Yuklash:**\n"
+        f"🏗 <b>Yuklash:</b>\n"
         f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
         f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
         f"©️ C-blok: {get_stage_status('C-blok')}\n"
         f"🇩 D-blok: {get_stage_status('D-blok')}\n"
         f"{transits_text}\n\n"
-        f"📊 **Status:** {order.get('current_status', 'NEW')}\n"
-        f"⏰ **Boshlandi:** {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
+        f"📊 <b>Status:</b> {escape_html(order.get('current_status', 'NEW'))}\n"
+        f"⏰ <b>Boshlandi:</b> {parse_dt(order.get('accepted_at')).strftime('%H:%M') if order.get('accepted_at') else '—'}\n"
     )
     return text
 
 async def update_group_report(bot: Bot, order_id: str):
     if not GROUP_CHAT_ID or str(GROUP_CHAT_ID) == "0": return
-    order = await asyncio.to_thread(get_order, order_id)
-    if not order or order.get('current_status') == 'YAKUNLANDI': return
-    text = build_interim_report(order)
     try:
+        order = await asyncio.to_thread(get_order, order_id)
+        if not order or order.get('current_status') == 'YAKUNLANDI': return
+        text = build_interim_report(order)
+        
         msg_id = order.get('group_message_id')
         if msg_id:
             try:
-                await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="Markdown")
+                await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="HTML")
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e).lower():
                     logger.error(f"Group report edit error: {e}")
+                    # Fallback to plain text if HTML fails
+                    try: 
+                        plain_text = text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+                        await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=plain_text)
+                    except: pass
         else:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="Markdown")
+            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="HTML")
             asyncio.create_task(asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)}))
-    except Exception as e: logger.error(f"Group report error: {e}")
+    except Exception as e:
+        logger.error(f"Group report error: {e}")
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -278,13 +291,17 @@ async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot:
         await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
     except Exception: pass
 
-@router.callback_query(F.data.startswith("tr_"))
+@router.callback_query(F.data.startswith("tr_oldi_") | F.data.startswith("tr_olmadi_"))
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
     data = await state.get_data()
     order_id = data.get('order_id')
-    if not order_id: return
+    if not order_id:
+        logger.error("Transit action received but no order_id in state.")
+        await callback.message.answer("❌ Xatolik, qayta urinib ko'ring")
+        return
     
+    logger.info(f"Transit 1 answer received for order {order_id}: {callback.data}")
     now = get_now()
     stage_history = data.get('stage_history') or []
     last_block_time = data.get('last_block_time') or now
@@ -296,23 +313,18 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
         label = "Transit 1"
         
         new_entry = {
-            "stage": label,
-            "status": status,
-            "emoji": emoji,
-            "color": "🚚",
-            "duration_seconds": duration_seconds,
-            "completed_at": now.strftime("%H:%M"),
-            "full_at": now.isoformat(),
-            "sequence": len(stage_history) + 1
+            "stage": label, "status": status, "emoji": emoji, "color": "🚚",
+            "duration_seconds": duration_seconds, "completed_at": now.strftime("%H:%M"),
+            "full_at": now.isoformat(), "sequence": len(stage_history) + 1
         }
         stage_history.append(new_entry)
         await state.update_data(stage_history=stage_history, last_block_time=now)
         await state.set_state(DeliveryStates.TRANSIT_EXTRA)
         
+        logger.info(f"Transit 1 recorded. Asking for Transit 2 for order {order_id}")
         try:
             await callback.message.edit_text(
-                f"📦 **Buyurtma #{order_id}**\n\n"
-                f"🚚 **2-transitingiz bormi?**",
+                f"📦 **Buyurtma #{order_id}**\n\n🚚 **2-transitingiz bormi?**",
                 reply_markup=kb.get_transit_extra_kb(2, order_id)
             )
         except Exception: pass
@@ -328,19 +340,15 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
         label = "Transit"
         
         new_entry = {
-            "stage": label,
-            "status": status,
-            "emoji": emoji,
-            "color": "🚚",
-            "duration_seconds": duration_seconds,
-            "completed_at": now.strftime("%H:%M"),
-            "full_at": now.isoformat(),
-            "sequence": len(stage_history) + 1
+            "stage": label, "status": status, "emoji": emoji, "color": "🚚",
+            "duration_seconds": duration_seconds, "completed_at": now.strftime("%H:%M"),
+            "full_at": now.isoformat(), "sequence": len(stage_history) + 1
         }
         stage_history.append(new_entry)
         await state.update_data(stage_history=stage_history, last_block_time=now)
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         
+        logger.info(f"Transit skipped for order {order_id}. Moving to LOADED_PHOTO.")
         try:
             await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
         except Exception: pass
@@ -354,13 +362,19 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
 async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
     parts = callback.data.split("_")
+    if len(parts) < 5:
+        await callback.message.answer("❌ Xatolik, qayta urinib ko'ring")
+        return
+        
     action, num, order_id = parts[2], int(parts[3]), parts[4]
+    logger.info(f"Transit Extra answer received: {action} for transit {num} (Order {order_id})")
     
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     now = get_now()
     
     if action == "yoq":
+        logger.info(f"Transit {num} declined for order {order_id}. Finishing transits.")
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
             await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
@@ -368,6 +382,7 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
         return
 
     # If action is "ha"
+    logger.info(f"Transit {num} confirmed for order {order_id}.")
     last_block_time = data.get('last_block_time') or now
     duration_seconds = int((now - last_block_time).total_seconds())
     
@@ -376,38 +391,35 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
     label = f"Transit {num}"
     
     new_entry = {
-        "stage": label,
-        "status": status,
-        "emoji": emoji,
-        "color": "🚚",
-        "duration_seconds": duration_seconds,
-        "completed_at": now.strftime("%H:%M"),
-        "full_at": now.isoformat(),
-        "sequence": len(stage_history) + 1
+        "stage": label, "status": status, "emoji": emoji, "color": "🚚",
+        "duration_seconds": duration_seconds, "completed_at": now.strftime("%H:%M"),
+        "full_at": now.isoformat(), "sequence": len(stage_history) + 1
     }
     stage_history.append(new_entry)
     await state.update_data(stage_history=stage_history, last_block_time=now)
     
     if num < 4:
-        # Ask for next transit
         next_num = num + 1
+        logger.info(f"Asking for Transit {next_num} for order {order_id}")
         try:
             await callback.message.edit_text(
-                f"📦 **Buyurtma #{order_id}**\n\n"
-                f"🚚 **{next_num}-transitingiz bormi?**",
+                f"📦 **Buyurtma #{order_id}**\n\n🚚 **{next_num}-transitingiz bormi?**",
                 reply_markup=kb.get_transit_extra_kb(next_num, order_id)
             )
         except Exception: pass
     else:
-        # Limit reached (4 transits)
+        logger.info(f"Max transits (4) reached for order {order_id}. Moving to LOADED_PHOTO.")
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
             await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
         except Exception: pass
 
     async def process_tr_extra():
-        await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': 'OLDI'})
-        await update_group_report(bot, order_id)
+        try:
+            await asyncio.to_thread(update_order, order_id, {'stage_history': stage_history, 'transit_at': now.isoformat(), 'transit_status': 'OLDI'})
+            await update_group_report(bot, order_id)
+        except Exception as e:
+            logger.error(f"Error in process_tr_extra: {e}")
     asyncio.create_task(process_tr_extra())
 
 @router.message(DeliveryStates.LOADED_PHOTO, F.photo | F.document)
