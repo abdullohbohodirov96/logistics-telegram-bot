@@ -29,8 +29,8 @@ def get_block_menu_kb(order_id: str, stage_history: list):
 def get_block_selection_kb(block_letter: str, order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Oldim", callback_data=f"block_act_{block_letter}_ortdi_{order_id}"),
-            InlineKeyboardButton(text="❌ Olmadim", callback_data=f"block_act_{block_letter}_ortmadi_{order_id}")
+            InlineKeyboardButton(text="✅ Oldim", callback_data=f"block_act_{block_letter}_oldim_{order_id}"),
+            InlineKeyboardButton(text="❌ Olmadim", callback_data=f"block_act_{block_letter}_olmadim_{order_id}")
         ],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"block_back_{order_id}")]
     ])

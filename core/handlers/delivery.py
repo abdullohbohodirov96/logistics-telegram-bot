@@ -147,24 +147,29 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
     await callback.answer()
     parts = callback.data.split("_")
     letter, status_type, order_id = parts[2], parts[3], parts[4]
+    # Explicitly define status variables to prevent NameError
+    status = "noma'lum"
+    emoji = "⚪️"
+    color = "⚪️"
+
+    # Support both old and new callback formats
+    if status_type in ["ortdi", "oldim"]:
+        status = "oldim"
+        emoji = "✅"
+        color = "🟩"
+    elif status_type in ["ortmadi", "olmadim"]:
+        status = "olmadim"
+        emoji = "❌"
+        color = "🟥"
+    else:
+        # Fallback if unknown status_type
+        await callback.answer("❌ Noto'g'ri amal", show_alert=True)
+        return
+
     try:
         now = get_now()
         data = await state.get_data()
         stage_history = data.get('stage_history') or []
-        
-        # Determine status, emoji, color
-        if status_type == "ortdi":
-            status = "ORTDI"
-            emoji = "✅"
-            color = "🟩"
-        elif status_type == "ortmadi":
-            status = "ORTMADI"
-            emoji = "❌"
-            color = "🟥"
-        else:
-            status = status_type.upper()
-            emoji = "⚪️"
-            color = "⚪️"
 
         # Calculate duration
         if not stage_history:
