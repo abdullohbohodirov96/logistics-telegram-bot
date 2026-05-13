@@ -127,10 +127,10 @@ async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     
-    # Check if already selected
-    if any(item['stage'] == f"{letter}-blok" for item in stage_history):
-        await callback.answer("Bu blok allaqachon belgilangan", show_alert=True)
-        return
+    # Allow re-selection as per user request
+    # if any(item['stage'] == f"{letter}-blok" for item in stage_history):
+    #     await callback.answer("Bu blok allaqachon belgilangan", show_alert=True)
+    #     return
         
     await state.set_state(DeliveryStates.BLOCK_SUBMENU)
     try:
@@ -165,9 +165,8 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
 
     duration_seconds = int((now - start_time).total_seconds())
     
-    status = "ORTDI" if status_type == "ortdi" else "ORTMADI"
-    emoji = "✅" if status_type == "ortdi" else "❌"
-    color = "🟩" if status_type == "ortdi" else "🟥"
+    # If block already exists, remove it (we'll re-append it to the end as "latest")
+    stage_history = [item for item in stage_history if item['stage'] != f"{letter}-blok"]
     
     new_entry = {
         "stage": f"{letter}-blok",

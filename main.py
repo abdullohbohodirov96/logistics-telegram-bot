@@ -34,6 +34,11 @@ async def main():
             logger.info(f"Starting Google Sheets polling job (interval: {POLL_INTERVAL_SECONDS}s)...")
             scheduler = AsyncIOScheduler()
             scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
+            
+            # Daily report at 10:00 AM
+            from core.scheduler import send_daily_report_job
+            scheduler.add_job(send_daily_report_job, 'cron', hour=10, minute=0, args=[bot])
+            
             scheduler.start()
         except Exception as e:
             logger.error(f"Failed to start Google Sheets scheduler: {e}")

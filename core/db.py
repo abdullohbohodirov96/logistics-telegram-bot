@@ -175,3 +175,12 @@ def get_dashboard_stats():
     except Exception as e:
         logger.error(f"Error getting dashboard stats: {e}")
         return {"active": 0, "finished_today": 0, "failed": 0, "updates": []}
+
+def get_orders_by_date_range(start_iso: str, end_iso: str):
+    try:
+        if not supabase: return []
+        response = supabase.table('orders').select('*').gte('completed_at', start_iso).lte('completed_at', end_iso).eq('current_status', 'YAKUNLANDI').execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting orders by date range: {e}")
+        return []

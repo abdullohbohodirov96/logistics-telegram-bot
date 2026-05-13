@@ -100,3 +100,79 @@ async def check_sheets_job(bot: Bot):
                 
     except Exception as e:
         logger.error(f"❌ Critical error in check_sheets_job: {e}")
+
+async def send_daily_report_job(bot: Bot):
+    try:
+        from datetime import datetime, timedelta
+        import pytz
+        from core.config import GROUP_CHAT_ID, TIMEZONE
+        from core.db import get_orders_by_date_range
+        from core.utils import get_seconds_diff
+        
+        tz = pytz.timezone(TIMEZONE)
+        now = datetime.now(tz)
+        
+        # We report on the "full yesterday" (00:00 to 23:59:59)
+        yesterday = now - timedelta(days=1)
+        start_dt = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = yesterday.replace(hour=23, minute=59, second=59, microsecond=0)
+        
+        orders = await asyncio.to_thread(get_orders_by_date_range, start_dt.isoformat(), end_dt.isoformat())
+        if not orders:
+            logger.info("No orders found for yesterday's daily report.")
+            return
+            
+        stats = {} # {telegram_id: {name, car, count, total_seconds}}
+        for o in orders:
+            tid = o.get('driver_telegram_id')
+            if not tid: continue
+            
+            if tid not in stats:
+                stats[tid] = {
+                    'name': o.get('driver_name', '-'),
+                    'car': o.get('car_number', '-'),
+                    'count': 0,
+                    'total_seconds': 0
+                }
+            
+            stats[tid]['count'] += 1
+            diff = get_seconds_diff(o.get('accepted_at'), o.get('completed_at'))
+            if diff:
+                stats[tid]['total_seconds'] += diff
+        
+        # Sort for ranking
+        ranking = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
+        
+        # Build Group Message
+        msg_group = f"📊 **KUNLIK HISOBOT ({yesterday.strftime('%d.%m.%Y')})**\n\n"
+        msg_group += "🏆 **REYTING:**\n"
+        
+        emojis = ["🥇", "🥈", "🥉"]
+        for i, (tid, s) in enumerate(ranking):
+            medal = emojis[i] if i < 3 else f"{i+1}."
+            avg_min = (s['total_seconds'] / s['count'] / 60) if s['count'] > 0 else 0
+            msg_group += f"{medal} **{s['name']}** ({s['car']}): {s['count']} reys | Ø {int(avg_min)} min\n"
+            
+            # Build Private Message
+            msg_private = (
+                f"📊 **KUNLIK HISOBOTINGIZ ({yesterday.strftime('%d.%m.%Y')})**\n\n"
+                f"✅ **Reyslar soni:** {s['count']}\n"
+                f"⏱ **O'rtacha vaqt:** {int(avg_min)} minut\n"
+            )
+            if i < 3:
+                msg_private += f"\nTabriklaymiz! Siz bugungi reytingda {i+1}-orinni egalladingiz! 🎊"
+                
+            try:
+                await bot.send_message(chat_id=tid, text=msg_private, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Failed to send private report to {tid}: {e}")
+        
+        if GROUP_CHAT_ID:
+            try:
+                await bot.send_message(chat_id=GROUP_CHAT_ID, text=msg_group, parse_mode="Markdown")
+                logger.info("Daily report sent to group.")
+            except Exception as e:
+                logger.error(f"Failed to send daily report to group: {e}")
+                
+    except Exception as e:
+        logger.error(f"Error in send_daily_report_job: {e}")
