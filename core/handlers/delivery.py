@@ -1,3 +1,4 @@
+import json
 import logging
 import asyncio
 from datetime import datetime
@@ -526,6 +527,21 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         fin_at = now
         d_total = format_duration_detailed(get_seconds_diff(acc_at, fin_at))
         
+        raw_stage_history = order.get("stage_history") or []
+        if isinstance(raw_stage_history, str):
+            try:
+                stage_history = json.loads(raw_stage_history)
+                logger.info(f"[FINISH] stage_history loaded from JSON string for order {order_id}")
+            except Exception:
+                stage_history = []
+                logger.warning(f"[FINISH] stage_history parse error for order {order_id}, using empty list")
+        elif isinstance(raw_stage_history, list):
+            stage_history = raw_stage_history
+            logger.info(f"[FINISH] stage_history loaded from list for order {order_id}")
+        else:
+            stage_history = []
+            logger.info(f"[FINISH] stage_history missing or invalid for order {order_id}, using empty list")
+
         history_lines_full = []
         history_lines_short = []
         
