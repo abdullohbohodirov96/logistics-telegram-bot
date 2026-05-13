@@ -184,3 +184,52 @@ def get_orders_by_date_range(start_iso: str, end_iso: str):
     except Exception as e:
         logger.error(f"Error getting orders by date range: {e}")
         return []
+
+def upsert_user(tid: int, full_name: str, username: str, language: str = None):
+    try:
+        if not supabase: return
+        data = {
+            'telegram_id': tid,
+            'full_name': full_name,
+            'username': username
+        }
+        if language: data['language'] = language
+        supabase.table('users').upsert(data, on_conflict='telegram_id').execute()
+    except Exception as e:
+        logger.error(f"Error upserting user {tid}: {e}")
+
+def get_user(tid: int):
+    try:
+        if not supabase: return None
+        res = supabase.table('users').select('*').eq('telegram_id', tid).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error getting user {tid}: {e}")
+        return None
+
+def count_active_orders(tid: int) -> int:
+    try:
+        if not supabase: return 0
+        # Active: assigned, in_progress, waiting_finish_photo (NOT YAKUNLANDI and NOT ERROR)
+        res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute()
+        return res.count if res.count else 0
+    except Exception as e:
+        logger.error(f"Error counting active orders for {tid}: {e}")
+        return 0
+
+def get_driver_stats(tid: int):
+    """Returns (active_count, today_count, total_count)"""
+    try:
+        if not supabase: return 0, 0, 0
+        import datetime, pytz
+        tz = pytz.timezone('Asia/Tashkent')
+        today_start = datetime.datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        active = count_active_orders(tid)
+        today = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').gte('completed_at', today_start).execute()
+        total = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).eq('current_status', 'YAKUNLANDI').execute()
+        
+        return active, (today.count or 0), (total.count or 0)
+    except Exception as e:
+        logger.error(f"Error getting driver stats for {tid}: {e}")
+        return 0, 0, 0

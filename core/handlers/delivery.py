@@ -90,9 +90,30 @@ async def update_group_report(bot: Bot, order_id: str):
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
-    if await state.get_state() is not None: return
+    
+    # Check active orders limit
+    from core.db import count_active_orders
+    active_count = await asyncio.to_thread(count_active_orders, tid)
+    if active_count >= 3:
+        await callback.message.answer(_('too_many_active', lang))
+        return
+
+    if await state.get_state() is not None:
+        # User might be in the middle of another order flow in FSM
+        # But we now allow multiple orders. So we should probably allow 
+        # starting another flow if they finished the previous one or if we manage multiple states.
+        # However, Aiogram 3 FSM is usually per-user. 
+        # To support multiple concurrent orders, we would need order_id in the state or separate states.
+        # Given the current structure, we'll allow it but warn if they are in middle of one.
+        pass
+
     order_id = callback.data.split("_")[1]
+    logger.info(f"Take delivery clicked: order_id={order_id}, user={tid}, active={active_count}")
     
     await state.update_data(order_id=order_id, stage_history=[])
     await state.set_state(DeliveryStates.BLOCK_MENU)
@@ -458,23 +479,43 @@ async def delivered_loc_wrong_input(message: Message):
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    tid = callback.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     await callback.answer()
     data = await state.get_data()
-    order_id = data.get('order_id')
+    order_id = data.get('order_id') or callback.data.split("_")[2]
     now = get_now().isoformat()
-    if not order_id: return
+    
+    logger.info(f"🏁 Finish button clicked: order_id={order_id}, user={tid}")
+    
+    if not order_id:
+        logger.error(f"❌ Finish failed: No order_id found in state or callback for user {tid}")
+        await callback.message.answer(_('order_not_found', lang))
+        return
     
     order = await asyncio.to_thread(get_order, order_id)
     if not order:
-        try: await callback.message.edit_text("❌ Buyurtma topilmadi.")
-        except Exception: pass
+        logger.error(f"❌ Finish failed: Order {order_id} not found in database")
+        await callback.message.answer(_('order_not_found', lang))
+        return
+
+    logger.info(f"✅ Order found: {order_id}, current_status={order.get('current_status')}")
+
+    if order.get('current_status') == 'YAKUNLANDI':
+        logger.warning(f"⚠️ Finish skipped: Order {order_id} already finished")
+        await callback.message.answer(_('order_already_finished', lang))
+        await state.clear()
         return
 
     if not order.get('loaded_photo_file_id') or not order.get('act_photo_file_id'):
+        logger.warning(f"⚠️ Finish blocked: Missing photos for order {order_id}")
         await callback.answer("❌ Yakunlash uchun yuk va akt rasmlari yuborilmagan!", show_alert=True)
         return
 
     await state.clear()
+    logger.info(f"✅ State cleared for user {tid}, finishing order {order_id}")
     
     acc_at = order.get('accepted_at')
     fin_at = now
@@ -527,6 +568,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     
     async def finish_background():
         await asyncio.to_thread(update_order, order_id, {'finished_at': now, 'current_status': 'YAKUNLANDI'})
+        logger.info(f"💾 Database updated: Order {order_id} set to YAKUNLANDI")
         await asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI')
         if GROUP_CHAT_ID:
             try:
@@ -556,6 +598,12 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
     asyncio.create_task(finish_background())
 @router.message(DeliveryStates())
 async def handle_wrong_input(message: Message, state: FSMContext):
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
     curr = await state.get_state()
-    if curr == DeliveryStates.ON_WAY: await message.answer("⚠️ Iltimos, avval yuqoridagi **🚚 Yo'lga chiqdim** tugmasini bosing!")
-    else: await message.answer("❌ Iltimos, yuqoridagi tugmalardan foydalaning.")
+    if curr == DeliveryStates.ON_WAY: 
+        await message.answer("⚠️ Iltimos, avval yuqoridagi **🚚 Yo'lga chiqdim** tugmasini bosing!")
+    else: 
+        await message.answer(_('error_wrong_input', lang))

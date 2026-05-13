@@ -22,21 +22,19 @@ tz = pytz.timezone(TIMEZONE)
 from aiogram.filters import Command
 
 @router.message(Command("admin"))
-@router.message(F.text == "/drivers")
-@router.message(F.text == "🛠 Admin panel")
+@router.message(F.text.in_({"🛠 Admin panel", "🛠 Админ панел"}))
 async def admin_panel(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        logger.warning(f"Admin access denied user_id: {message.from_user.id}")
-        await message.answer("Siz admin emassiz.")
+    tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
+    if tid not in ADMIN_IDS:
+        logger.warning(f"Admin access denied user_id: {tid}")
+        await message.answer(_('admin_panel', lang) + " ❌ (Access Denied)")
         return
     
     try:
-        logger.info(f"Admin panel opened by user_id: {message.from_user.id}")
-        
-        if message.text == "/drivers":
-            await show_cars_status_message(message)
-            return
-
+        logger.info(f"Admin panel opened by user_id: {tid}")
         await message.answer("🛠 Admin paneliga xush kelibsiz. Quyidagilardan birini tanlang:", reply_markup=kb.get_admin_panel_kb())
     except Exception as e:
         logger.error(f"Error opening admin panel: {e}")
@@ -58,12 +56,21 @@ async def show_cars_status_message(message: Message):
         await message.answer("⚠️ Ma'lumot olinmadi.")
         return
         
-    text = "🚛 **Haydovchilar holati:**\n\n"
+    text = "🚛 **Haydovchilar holati (Real-time):**\n\n"
+    from core.db import get_driver_stats
+    
     for d in data:
-        status_icon = "🟢" if d['status'] == "BO'SH" else "🔴"
-        text += f"{status_icon} **{d['car_number']}** — {d['driver_name']} — {d['status']}"
-        if d['order_id']: text += f" — #{d['order_id']}"
-        text += "\n"
+        tid = d.get('telegram_id')
+        active_c, today_c, total_c = 0, 0, 0
+        if tid:
+            active_c, today_c, total_c = await asyncio.to_thread(get_driver_stats, int(tid))
+            
+        status_icon = "🟢" if active_c == 0 else "🟡" if active_c < 3 else "🔴"
+        text += f"{status_icon} **{d['car_number']}** — {d['driver_name']}\n"
+        tid_display = tid if tid else "Noma'lum"
+        text += f"   ├ 🆔 TID: `{tid_display}`\n"
+        text += f"   ├ 🔄 Aktiv: {active_c}/3\n"
+        text += f"   └ 📊 Reyslar: Bugun: {today_c} | Jami: {total_c}\n\n"
     
     await message.answer(text, parse_mode="Markdown")
     logger.info(f"admin drivers status took {time.time()-t0:.2f}s")

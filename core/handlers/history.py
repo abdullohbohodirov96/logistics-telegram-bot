@@ -86,10 +86,14 @@ def format_delivery_detailed(order, steps=None):
     text += get_stage_info("Lokatsiya", "delivered_location_at")
     return text
 
-@router.message(F.text == "📋 Mening tarixim")
+@router.message(F.text.in_({"📋 Mening tarixim", "📋 Менинг тарихим"}))
 async def my_history(message: Message):
     t0 = time.time()
     tid = message.from_user.id
+    user = get_user(tid)
+    lang = user.get('language') if user else 'uz_latin'
+    
+    # Strictly filter by tid
     history = await asyncio.to_thread(get_history, 'drv', str(tid))
     if not history:
         await message.answer("Sizda hali tarix yo'q.")
