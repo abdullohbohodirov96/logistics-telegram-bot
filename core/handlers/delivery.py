@@ -526,39 +526,53 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         fin_at = now
         d_total = format_duration_detailed(get_seconds_diff(acc_at, fin_at))
         
-        stage_history = order.get('stage_history') or []
-        history_lines = []
+        history_lines_full = []
+        history_lines_short = []
         
         for item in stage_history:
             d_str = format_duration_detailed(item.get('duration_seconds'))
-            line = f"{item.get('color', '🟩')} {item['stage']}: {item.get('emoji', '✅')} {item['status']} — {d_str} ({item.get('completed_at', '-')})"
-            history_lines.append(line)
+            status_val = item.get('status', 'oldim')
+            emoji_val = item.get('emoji', '✅')
+            
+            # Full version for group
+            full_line = f"{item.get('color', '🟩')} {item['stage']}: {emoji_val} {status_val} — {d_str} ({item.get('completed_at', '-')})"
+            history_lines_full.append(full_line)
+            
+            # Short version for driver
+            short_status = "oldi" if status_val.lower() == "oldi" else status_val
+            history_lines_short.append(f"{item.get('color', '🟩')} {item['stage']}: {short_status}")
         
         # Last action time for next duration calculation
         last_action_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
         
-        def get_emoji_line(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
+        def get_lines(label, status, dt1, dt2, success_val, emoji_ok="🟩", emoji_fail="🟥", ok_icon="✅", fail_icon="❌"):
             if dt2:
                 d_str = format_duration_detailed(get_seconds_diff(dt1, dt2))
                 dt_formatted = parse_dt(dt2).strftime('%H:%M') if parse_dt(dt2) else ""
                 is_ok = (status == success_val) if status else True
-                st_text = status if status else ("YUBORILDI" if "Lokatsiya" in label else "OLINDI" if "rasmi" in label else "BOSILDI")
+                st_text = status if status else ("yuborildi" if "Lokatsiya" in label else "olindi" if "rasmi" in label else "bosildi")
                 icon = ok_icon if is_ok else fail_icon
                 color = emoji_ok if is_ok else emoji_fail
-                return f"{color} {label}: {icon} {st_text} — {d_str} ({dt_formatted})"
-            return f"{emoji_fail} {label}: ❌ YUBORILMADI"
+                
+                full = f"{color} {label}: {icon} {st_text.upper()} — {d_str} ({dt_formatted})"
+                short = f"{color} {label}: {st_text}"
+                return full, short
+            return f"{emoji_fail} {label}: ❌ YUBORILMADI", f"{emoji_fail} {label}: yuborilmadi"
 
-        line_yuk = get_emoji_line("Yuk rasmi", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
-        line_way = get_emoji_line("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
-        line_act = get_emoji_line("Akt rasmi", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
-        line_loc = get_emoji_line("Lokatsiya", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
+        full_yuk, short_yuk = get_lines("Yuk rasmi", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
+        full_way, short_way = get_lines("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
+        full_act, short_act = get_lines("Akt rasmi", "", order.get('on_way_at'), order.get('act_photo_at'), "", "🧾", "🧾")
+        full_loc, short_loc = get_lines("Lokatsiya", "", order.get('act_photo_at'), order.get('delivered_location_at'), "", "📍", "🟥")
 
-        history_lines.extend([line_yuk, line_way, line_act, line_loc])
-        etaplar_text = "\n".join(history_lines)
+        history_lines_full.extend([full_yuk, full_way, full_act, full_loc])
+        history_lines_short.extend([short_yuk, short_way, short_act, short_loc])
+        
+        etaplar_full = "\n".join(history_lines_full)
+        etaplar_short = "\n".join(history_lines_short)
 
-        drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
+        drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n\n"
                    f"📋 **Etaplar:**\n"
-                   f"{etaplar_text}\n")
+                   f"{etaplar_short}")
         
         try: await callback.message.edit_text(drv_msg, parse_mode="Markdown")
         except Exception: pass
@@ -580,7 +594,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                                 f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n🚘 **Mashina:** {order.get('car_number', '-')}\n"
                                 f"📍 **Manzil:** {order.get('address', '-')}\n📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
                                 f"📋 **Etaplar:**\n"
-                                f"{etaplar_text}\n\n"
+                                f"{etaplar_full}\n\n"
                                 f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
                     
                     media = [
