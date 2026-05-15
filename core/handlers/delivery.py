@@ -113,7 +113,10 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
     
     try:
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\n"
+            f"📦 **Bloklardan yuk olish**\n"
+            f"⚠️ Hamma bloklarni tanlashingiz kerak!\n"
+            f"⚠️ Ҳамма блокларни танлашингиз керак!\n\n"
             f"🅰️ A-blok: ⏳ Tanlanmagan\n"
             f"🅱️ B-blok: ⏳ Tanlanmagan\n"
             f"©️ C-blok: ⏳ Tanlanmagan\n"
@@ -236,7 +239,10 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
             return "⏳ Tanlanmagan"
 
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"📦 **Buyurtma #{order_id}**\n\n"
+            f"📦 **Bloklardan yuk olish**\n"
+            f"⚠️ Hamma bloklarni tanlashingiz kerak!\n"
+            f"⚠️ Ҳамма блокларни танлашингиз керак!\n\n"
             f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
             f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
             f"©️ C-blok: {get_stage_status('C-blok')}\n"
@@ -267,7 +273,10 @@ async def handle_block_back(callback: CallbackQuery, state: FSMContext):
 
     try:
         await callback.message.edit_text(
-            f"📦 **Buyurtma #{order_id}**\n\n📦 **Bloklardan yuk olish**\n\n"
+            f"📦 **Buyurtma #{order_id}**\n\n"
+            f"📦 **Bloklardan yuk olish**\n"
+            f"⚠️ Hamma bloklarni tanlashingiz kerak!\n"
+            f"⚠️ Ҳамма блокларни танлашингиз керак!\n\n"
             f"🅰️ A-blok: {get_stage_status('A-blok')}\n"
             f"🅱️ B-blok: {get_stage_status('B-blok')}\n"
             f"©️ C-blok: {get_stage_status('C-blok')}\n"
@@ -278,18 +287,31 @@ async def handle_block_back(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("confirm_blocks_"))
 async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    await callback.answer()
     order_id = callback.data.split("_")[2]
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     
-    if len(stage_history) < 4:
-        await callback.answer("Avval A/B/C/D bloklarning hammasini belgilang", show_alert=True)
+    selected = {item['stage'] for item in stage_history}
+    all_blocks = {"A-blok", "B-blok", "C-blok", "D-blok"}
+    missing = all_blocks - selected
+    
+    if missing:
+        missing_str = ", ".join(sorted(missing))
+        await callback.answer(
+            f"⚠️ Belgilanmagan bloklar: {missing_str}\nHamma bloklarni belgilang!",
+            show_alert=True
+        )
         return
-        
+    
+    await callback.answer()
     await state.set_state(DeliveryStates.TRANSIT)
     try:
-        await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nSavol: **Transitdan narsa oldingizmi?**", reply_markup=kb.get_transit_kb(order_id))
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\n"
+            f"🚚 Transitdan yuk oldingizmi?\n"
+            f"🚚 Транзитдан юк олдингизми?",
+            reply_markup=kb.get_transit_kb(order_id)
+        )
     except Exception: pass
 
 @router.callback_query(F.data.startswith("tr_oldi_") | F.data.startswith("tr_olmadi_"))
@@ -434,12 +456,20 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
     await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
     await state.set_state(DeliveryStates.ON_WAY)
     addr = order.get('address', '-')
-    await message.answer(f"✅ Rasm qabul qilindi.\n\n📍 **Manzil:** {addr}\n\n**Yo'lga chiqdingizmi?**", reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}"))
+    await message.answer(
+        f"✅ Rasm qabul qilindi.\n✅ Расм қабул қилинди.\n\n"
+        f"📍 **Manzil:** {addr}\n\n"
+        f"Yo'lga chiqdingizmi?\nЙo'лга чиқдингизми?",
+        reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}")
+    )
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.LOADED_PHOTO)
 async def loaded_photo_wrong_input(message: Message):
-    await message.answer("❌ Iltimos, faqat yuk rasmini yuboring.")
+    await message.answer(
+        "📸 Iltimos, faqat yuk rasmini yuboring.\n"
+        "📸 Илтимос, фақат юк расмини юборинг."
+    )
 
 @router.callback_query(F.data.startswith("step_way_"))
 async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -447,7 +477,14 @@ async def step_way(callback: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data(); order_id = data.get('order_id'); now = get_now().isoformat()
     if not order_id: return
     await state.set_state(DeliveryStates.ACT_PHOTO)
-    try: await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\nMijoz manziliga yetib borgach akt rasmini yuboring:\n\n📄 **Qo'l qo'ydirilgan akt rasmini yuboring**")
+    try:
+        await callback.message.edit_text(
+            f"📦 **Buyurtma #{order_id}**\n\n"
+            f"Mijoz manziliga yetib borgach akt rasmini yuboring:\n"
+            f"Мижоз манзилига етиб борганингиздан сўнг акт расмини юборинг:\n\n"
+            f"📄 Qo'l qo'ydirilgan akt rasmini yuboring\n"
+            f"📄 Қўл қўйдирилган акт расмини юборинг"
+        )
     except Exception: pass
     
     async def process_way():
@@ -466,12 +503,20 @@ async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
         return
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
     await state.set_state(DeliveryStates.DELIVERED_LOC)
-    await message.answer(f"✅ Akt qabul qilindi.\n\n📍 **Yetkazilgan joy lokatsiyasini yuboring**", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    await message.answer(
+        f"✅ Akt qabul qilindi.\n✅ Акт қабул қилинди.\n\n"
+        f"📍 Yetkazilgan joy lokatsiyasini yuboring\n"
+        f"📍 Етказилган жой локациясини юборинг",
+        reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish")
+    )
     asyncio.create_task(update_group_report(bot, order_id))
 
 @router.message(DeliveryStates.ACT_PHOTO)
 async def act_photo_wrong_input(message: Message):
-    await message.answer("❌ Iltimos, faqat rasm yuboring (kamera yoki gallery).")
+    await message.answer(
+        "📄 Iltimos, faqat akt rasmini yuboring.\n"
+        "📄 Илтимос, фақат акт расмини юборинг."
+    )
 
 @router.message(DeliveryStates.DELIVERED_LOC, F.location)
 async def handle_delivered_location(message: Message, state: FSMContext, bot: Bot):
@@ -490,7 +535,11 @@ async def handle_delivered_location(message: Message, state: FSMContext, bot: Bo
 
 @router.message(DeliveryStates.DELIVERED_LOC)
 async def delivered_loc_wrong_input(message: Message):
-    await message.answer("❌ Iltimos, faqat lokatsiya yuboring.", reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"))
+    await message.answer(
+        "📍 Iltimos, faqat lokatsiya yuboring.\n"
+        "📍 Илтимос, фақат локация юборинг.",
+        reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish")
+    )
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -586,9 +635,17 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         etaplar_full = "\n".join(history_lines_full)
         etaplar_short = "\n".join(history_lines_short)
 
-        drv_msg = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n\n"
-                   f"📋 **Etaplar:**\n"
-                   f"{etaplar_short}")
+        acc_str = parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'
+        fin_str = parse_dt(fin_at).strftime('%H:%M') if fin_at else '-'
+        drv_msg = (
+            f"✅ **Buyurtma yakunlandi**\n\n"
+            f"🆔 Buyurtma: #{order_id}\n"
+            f"⏰ Boshlandi: {acc_str}\n"
+            f"🏁 Tugadi: {fin_str}\n"
+            f"⏳ Umumiy vaqt: {d_total}\n\n"
+            f"📋 **Etaplar:**\n"
+            f"{etaplar_short}"
+        )
         
         try: await callback.message.edit_text(drv_msg, parse_mode="Markdown")
         except Exception: pass
@@ -619,12 +676,19 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                     ]
                     await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
                 
-                # Check if driver has other active orders to decide car status
+                # Driver status reset
                 tid = order.get('driver_telegram_id')
+                car_number = order.get('car_number', '')
                 from core.db import get_active_orders_count
                 active_left = await asyncio.to_thread(get_active_orders_count, tid)
                 if active_left == 0:
-                    await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), "BO'SH", "")
+                    try:
+                        await asyncio.to_thread(update_driver_status_sheet, car_number, "BO'SH", "")
+                        logger.info(f"[FINISH] Driver reset: car_number={car_number}, status=BO'SH, current_order_id cleared")
+                    except Exception as dr_err:
+                        logger.error(f"[FINISH] Driver reset error for {car_number}: {dr_err}")
+                else:
+                    logger.info(f"[FINISH] Driver {car_number} has {active_left} active orders left, status not reset")
                 
                 logger.info(f"[FINISH] Order {order_id} successfully finalized.")
             except Exception as e:
@@ -640,5 +704,32 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
 @router.message(DeliveryStates())
 async def handle_wrong_input(message: Message, state: FSMContext):
     curr = await state.get_state()
-    if curr == DeliveryStates.ON_WAY: await message.answer("⚠️ Iltimos, avval yuqoridagi **🚚 Yo'lga chiqdim** tugmasini bosing!")
-    else: await message.answer("❌ Iltimos, yuqoridagi tugmalardan foydalaning.")
+    try:
+        if curr == DeliveryStates.ON_WAY:
+            await message.answer(
+                "⚠️ Iltimos, avval yuqoridagi **🚚 Yo'lga chiqdim** tugmasini bosing!\n"
+                "⚠️ Илтимос, аввал юқоридаги **🚚 Йo'лга чиқдим** тугмасини bosing!"
+            )
+        elif curr == DeliveryStates.LOADED_PHOTO:
+            await message.answer(
+                "📸 Iltimos, yuk rasmini yuboring.\n"
+                "📸 Илтимос, юк расмини юборинг."
+            )
+        elif curr == DeliveryStates.ACT_PHOTO:
+            await message.answer(
+                "📄 Iltimos, akt rasmini yuboring.\n"
+                "📄 Илтимос, акт расмини юборинг."
+            )
+        elif curr == DeliveryStates.DELIVERED_LOC:
+            await message.answer(
+                "📍 Iltimos, lokatsiya yuboring.\n"
+                "📍 Илтимос, локация юборинг.",
+                reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish")
+            )
+        elif curr is not None:
+            await message.answer(
+                "ℹ️ Iltimos, pastdagi tugmalardan foydalaning.\n"
+                "ℹ️ Илтимос, пастдаги тугмалардан фойдаланинг."
+            )
+    except Exception as e:
+        logger.error(f"handle_wrong_input error: {e}")
