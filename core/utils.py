@@ -41,6 +41,19 @@ def format_duration_detailed(seconds: int):
         return f"{m} daqiqa {s} soniya"
     return f"{s} soniya"
 
+def get_seconds_diff(start_iso, end_iso):
+    """Return difference in seconds between two ISO datetime strings. Returns None on error."""
+    if not start_iso or not end_iso: return None
+    try:
+        s = parse_dt(start_iso)
+        e = parse_dt(end_iso)
+        if s and e:
+            return int((e - s).total_seconds())
+        return None
+    except Exception:
+        return None
+
+
 def format_duration(minutes: int):
     """Old simplified version for backward compatibility if needed."""
     if minutes is None: return ""
