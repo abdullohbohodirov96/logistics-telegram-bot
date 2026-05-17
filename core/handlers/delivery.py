@@ -105,12 +105,19 @@ async def update_group_report(bot: Bot, order_id: str):
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
-    if await state.get_state() is not None: return
     order_id = callback.data.split("_")[1]
-    
+
+    # Multi-order: haydovchi 3 tagacha order qabul qilishi mumkin
+    # Agar state boshqa order uchun bo'lsa — yangi state open qilamiz
+    data = await state.get_data()
+    existing_order_id = data.get('order_id')
+    if existing_order_id and existing_order_id != order_id:
+        # Haydovchi boshqa order ustida ishlayapti — uni saqlab, yangi orderga o'tamiz
+        logger.info(f"Driver switching from order {existing_order_id} to new order {order_id}")
+
     await state.update_data(order_id=order_id, stage_history=[])
     await state.set_state(DeliveryStates.BLOCK_MENU)
-    
+
     try:
         await callback.message.edit_text(
             f"📦 **Buyurtma #{order_id} qabul qilindi.**\n\n"
@@ -124,16 +131,24 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
             reply_markup=kb.get_block_menu_kb(order_id, [])
         )
     except Exception: pass
-    
+
     async def process_take():
         order = await asyncio.to_thread(get_order, order_id)
         if not order: return
         now = get_now().isoformat()
-        await asyncio.to_thread(update_order, order_id, {'current_status': 'QABUL_QILINDI', 'accepted_at': now, 'driver_telegram_id': callback.from_user.id, 'driver_name': callback.from_user.full_name})
+        await asyncio.to_thread(update_order, order_id, {
+            'current_status': 'QABUL_QILINDI',
+            'accepted_at': now,
+            'driver_telegram_id': callback.from_user.id,
+            'driver_name': callback.from_user.full_name
+        })
         await asyncio.to_thread(update_order_status_by_order_id, order_id, 'QABUL_QILINDI')
-        await asyncio.to_thread(update_driver_status_sheet, order.get('car_number'), 'YUK OGAN', order_id)
+        car = order.get('car_number', '')
+        if car:
+            await asyncio.to_thread(update_driver_status_sheet, car, 'YUK OGAN', order_id)
         await update_group_report(bot, order_id)
     asyncio.create_task(process_take())
+
 
 @router.callback_query(F.data.startswith("sel_block_"))
 async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
@@ -400,28 +415,28 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
         logger.info(f"Transit {num} declined for order {order_id}. Finishing transits.")
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
-            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+            await callback.message.edit_text(
+                f"📦 **Buyurtma #{order_id}**\n\n"
+                f"📸 Yuk ortilgan rasmni yuboring\n"
+                f"📸 Юк ортилган расмни юборинг"
+            )
         except Exception: pass
         return
 
-    # If action is "ha"
+    # action == "ha"
     logger.info(f"Transit {num} confirmed for order {order_id}.")
     last_block_time = data.get('last_block_time') or now
     duration_seconds = int((now - last_block_time).total_seconds())
-    
-    status = "OLDI"
-    emoji = "✅"
-    label = f"Transit {num}"
-    
+
     new_entry = {
-        "stage": label, "status": status, "emoji": emoji, "color": "🚚",
+        "stage": f"Transit {num}", "status": "OLDI", "emoji": "✅", "color": "🚚",
         "duration_seconds": duration_seconds, "completed_at": now.strftime("%H:%M"),
         "full_at": now.isoformat(), "sequence": len(stage_history) + 1
     }
     stage_history.append(new_entry)
     await state.update_data(stage_history=stage_history, last_block_time=now)
-    
-    if num < 4:
+
+    if num < 10:  # Transit limit: 10
         next_num = num + 1
         logger.info(f"Asking for Transit {next_num} for order {order_id}")
         try:
@@ -431,10 +446,14 @@ async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: 
             )
         except Exception: pass
     else:
-        logger.info(f"Max transits (4) reached for order {order_id}. Moving to LOADED_PHOTO.")
+        logger.info(f"Max transits (10) reached for order {order_id}. Moving to LOADED_PHOTO.")
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         try:
-            await callback.message.edit_text(f"📦 **Buyurtma #{order_id}**\n\n📸 **Yuk ortilgan rasmni yuboring**")
+            await callback.message.edit_text(
+                f"📦 **Buyurtma #{order_id}**\n\n"
+                f"📸 Yuk ortilgan rasmni yuboring\n"
+                f"📸 Юк ортилган расмни юборинг"
+            )
         except Exception: pass
 
     async def process_tr_extra():
@@ -676,21 +695,25 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                     ]
                     await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
                 
-                # Driver status reset
+                # Driver status reset — always update Sheets
                 tid = order.get('driver_telegram_id')
                 car_number = order.get('car_number', '')
-                from core.db import get_active_orders_count
-                active_left = await asyncio.to_thread(get_active_orders_count, tid)
-                if active_left == 0:
-                    try:
-                        await asyncio.to_thread(update_driver_status_sheet, car_number, "BO'SH", "")
-                        logger.info(f"[FINISH] Driver reset: car_number={car_number}, status=BO'SH, current_order_id cleared")
-                    except Exception as dr_err:
-                        logger.error(f"[FINISH] Driver reset error for {car_number}: {dr_err}")
-                else:
-                    logger.info(f"[FINISH] Driver {car_number} has {active_left} active orders left, status not reset")
-                
+                try:
+                    from core.db import get_active_orders_count
+                    active_left = await asyncio.to_thread(get_active_orders_count, tid)
+                    if active_left == 0:
+                        ok = await asyncio.to_thread(update_driver_status_sheet, car_number, "BO'SH", "")
+                        if ok:
+                            logger.info(f"[FINISH] Driver reset: car_number={car_number}, status=BO'SH, current_order_id cleared")
+                        else:
+                            logger.warning(f"[FINISH] Driver reset FAILED (not found in sheet) for car_number={car_number}")
+                    else:
+                        logger.info(f"[FINISH] Driver {car_number} still has {active_left} active orders, keeping YUK OGAN")
+                except Exception as dr_err:
+                    logger.error(f"[FINISH] Driver reset error for {car_number}: {dr_err}")
+
                 logger.info(f"[FINISH] Order {order_id} successfully finalized.")
+
             except Exception as e:
                 import traceback
                 logger.error(f"[FINISH] Background task error for order {order_id}: {e}\n{traceback.format_exc()}")

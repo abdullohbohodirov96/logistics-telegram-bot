@@ -113,6 +113,25 @@ def get_active_orders():
         logger.error(f"Error getting active orders: {e}")
         return []
 
+def get_active_orders_by_driver(driver_tid):
+    """Returns all non-finished orders for a specific driver (for multi-order panel)."""
+    try:
+        if not supabase: return []
+        response = (
+            supabase.table('orders')
+            .select('*')
+            .eq('driver_telegram_id', str(driver_tid))
+            .neq('current_status', 'YAKUNLANDI')
+            .order('created_at', desc=True)
+            .limit(10)
+            .execute()
+        )
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting active orders by driver {driver_tid}: {e}")
+        return []
+
+
 def get_history(filter_type: str, filter_val: str, date_from: str = None, date_to: str = None, limit: int = 50):
     t0 = time.time()
     try:

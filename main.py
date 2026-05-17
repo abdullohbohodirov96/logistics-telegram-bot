@@ -30,18 +30,22 @@ async def main():
     # Start Google Sheets scheduler
     if is_sheets_configured():
         try:
-            from core.scheduler import check_sheets_job
+            from core.scheduler import check_sheets_job, send_daily_report_job, send_driver_reminders
             logger.info(f"Starting Google Sheets polling job (interval: {POLL_INTERVAL_SECONDS}s)...")
-            scheduler = AsyncIOScheduler()
+            scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
             scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
-            
-            # Daily report at 22:00 PM
-            from core.scheduler import send_daily_report_job
+
+            # Daily report at 22:00 Tashkent
             scheduler.add_job(send_daily_report_job, 'cron', hour=22, minute=0, args=[bot])
-            
+
+            # 30-minute driver reminders
+            scheduler.add_job(send_driver_reminders, 'interval', minutes=30, args=[bot])
+
             scheduler.start()
+            logger.info("✅ All scheduler jobs started.")
         except Exception as e:
-            logger.error(f"Failed to start Google Sheets scheduler: {e}")
+            logger.error(f"Failed to start scheduler: {e}")
+
 
     # Polling mode (Standard for Worker)
     logger.info("Starting Bot in Polling mode (Worker style)...")

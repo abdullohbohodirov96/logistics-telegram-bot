@@ -135,8 +135,13 @@ def update_order_status_by_order_id(order_id, status):
         logger.error(f"Error update_order_status_by_order_id: {e}")
 
 def update_driver_status_sheet(car_number, status, order_id=""):
+    if not car_number:
+        logger.warning("[DRIVER_SHEET] car_number is empty, skipping update.")
+        return False
     client = get_gspread_client()
-    if not client: return
+    if not client:
+        logger.error("[DRIVER_SHEET] No gspread client, cannot update driver status.")
+        return False
     try:
         sh = client.open_by_key(GOOGLE_SHEET_ID)
         worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
@@ -144,8 +149,15 @@ def update_driver_status_sheet(car_number, status, order_id=""):
         if cell:
             worksheet.update_cell(cell.row, 4, status)
             worksheet.update_cell(cell.row, 5, order_id)
+            logger.info(f"[DRIVER_SHEET] car={car_number} row={cell.row} status={status} order_id='{order_id}'")
+            return True
+        else:
+            logger.warning(f"[DRIVER_SHEET] car_number='{car_number}' NOT FOUND in Drivers sheet.")
+            return False
     except Exception as e:
-        logger.error(f"Error update_driver_status_sheet: {e}")
+        logger.error(f"[DRIVER_SHEET] Error updating driver status for {car_number}: {e}")
+        return False
+
 
 def get_driver_by_tid(tid):
     client = get_gspread_client()
