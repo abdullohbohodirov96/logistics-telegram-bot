@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 import pytz
 
 from aiogram import Bot
-from core.sheets import get_new_orders, update_order_status, get_drivers, update_driver_status_sheet
+from core.sheets import (
+    get_new_orders, update_order_status, get_drivers,
+    update_driver_status_sheet, remove_order_from_driver_sheet,
+    write_driver_order_count_to_orders_sheet
+)
 from core.db import create_order, get_order
 import core.keyboards as kb
 
@@ -100,9 +104,15 @@ async def check_sheets_job(bot: Bot):
                     await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_TG_SEND_FAILED')
                     continue
 
-                # Update status
+                # Update status in Sheets
                 await asyncio.to_thread(update_order_status, order['row_index'], 'SENT')
                 await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
+
+                # Write driver's total active count to orders sheet col G
+                new_active_count = active_count + 1
+                await asyncio.to_thread(
+                    write_driver_order_count_to_orders_sheet, order_id, new_active_count
+                )
 
                 PROCESSED_ORDERS[order_id] = True
 

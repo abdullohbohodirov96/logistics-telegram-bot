@@ -125,7 +125,7 @@ def update_order_status_by_order_id(order_id, status):
     try:
         sh = client.open_by_key(GOOGLE_SHEET_ID)
         worksheet = sh.worksheet(ORDERS_SHEET_NAME)
-        cell = worksheet.find(str(order_id).strip(), in_column=1) # Assume ID is col 1
+        cell = worksheet.find(str(order_id).strip(), in_column=1)
         if cell:
             headers = worksheet.row_values(1)
             status_idx = fuzzy_match_header(headers, ['status', 'holat'])
@@ -134,7 +134,36 @@ def update_order_status_by_order_id(order_id, status):
     except Exception as e:
         logger.error(f"Error update_order_status_by_order_id: {e}")
 
+
+def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
+    """
+    Writes driver's active order count to column G of the orders sheet.
+    Called when a new order is dispatched to a driver.
+    Format: '1 buyurtma' / '2 buyurtma' / '3 buyurtma'
+    """
+    client = get_gspread_client()
+    if not client: return
+    try:
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
+        cell = worksheet.find(str(order_id).strip(), in_column=1)
+        if cell:
+            count_label = f"{driver_active_count} buyurtma"
+            worksheet.update_cell(cell.row, 7, count_label)  # Column G = index 7
+            logger.info(f"[ORDERS_SHEET] order={order_id} row={cell.row} col G → '{count_label}'")
+    except Exception as e:
+        logger.error(f"[ORDERS_SHEET] write_driver_order_count_to_orders_sheet error: {e}")
+
 def update_driver_status_sheet(car_number, status, order_id=""):
+    """
+    Updates drivers sheet:
+    - Col D (4): status (BO'SH / YUK OGAN)
+    - Col E (5): active order_ids joined by '/' e.g. 'S213/S2134'
+    - Col F (6): count of active orders (e.g. '2 ta')
+
+    If status is BO'SH and order_id is empty → clear E and F.
+    If status is YUK OGAN → fetch current E value, append order_id if not already present.
+    """
     if not car_number:
         logger.warning("[DRIVER_SHEET] car_number is empty, skipping update.")
         return False
@@ -146,16 +175,78 @@ def update_driver_status_sheet(car_number, status, order_id=""):
         sh = client.open_by_key(GOOGLE_SHEET_ID)
         worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
         cell = worksheet.find(str(car_number).strip().upper(), in_column=1)
-        if cell:
-            worksheet.update_cell(cell.row, 4, status)
-            worksheet.update_cell(cell.row, 5, order_id)
-            logger.info(f"[DRIVER_SHEET] car={car_number} row={cell.row} status={status} order_id='{order_id}'")
-            return True
-        else:
+        if not cell:
             logger.warning(f"[DRIVER_SHEET] car_number='{car_number}' NOT FOUND in Drivers sheet.")
             return False
+
+        row = cell.row
+
+        if status == "BO'SH" or not order_id:
+            # Clear all order info
+            worksheet.update_cell(row, 4, status)
+            worksheet.update_cell(row, 5, "")
+            worksheet.update_cell(row, 6, "")
+            logger.info(f"[DRIVER_SHEET] car={car_number} → BO'SH, cleared order_ids")
+        else:
+            # YUK OGAN — merge order_ids
+            row_vals = worksheet.row_values(row)
+            existing_raw = row_vals[4] if len(row_vals) > 4 else ""
+            existing_ids = [x.strip() for x in existing_raw.split("/") if x.strip()]
+
+            # Remove finished orders — if order_id not in list, add it
+            if str(order_id).strip() not in existing_ids:
+                existing_ids.append(str(order_id).strip())
+
+            joined = "/".join(existing_ids)
+            count_str = f"{len(existing_ids)} ta"
+
+            worksheet.update_cell(row, 4, status)
+            worksheet.update_cell(row, 5, joined)
+            worksheet.update_cell(row, 6, count_str)
+            logger.info(f"[DRIVER_SHEET] car={car_number} row={row} status={status} orders='{joined}' count={count_str}")
+
+        return True
     except Exception as e:
         logger.error(f"[DRIVER_SHEET] Error updating driver status for {car_number}: {e}")
+        return False
+
+
+def remove_order_from_driver_sheet(car_number, finished_order_id):
+    """
+    Called on order finish: removes finished_order_id from col E.
+    If no more orders left → sets status to BO'SH.
+    """
+    if not car_number or not finished_order_id:
+        return False
+    client = get_gspread_client()
+    if not client: return False
+    try:
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
+        cell = worksheet.find(str(car_number).strip().upper(), in_column=1)
+        if not cell:
+            return False
+        row = cell.row
+        row_vals = worksheet.row_values(row)
+        existing_raw = row_vals[4] if len(row_vals) > 4 else ""
+        existing_ids = [x.strip() for x in existing_raw.split("/") if x.strip()]
+        existing_ids = [x for x in existing_ids if x != str(finished_order_id).strip()]
+
+        if existing_ids:
+            joined = "/".join(existing_ids)
+            count_str = f"{len(existing_ids)} ta"
+            worksheet.update_cell(row, 4, "YUK OGAN")
+            worksheet.update_cell(row, 5, joined)
+            worksheet.update_cell(row, 6, count_str)
+            logger.info(f"[DRIVER_SHEET] Removed order {finished_order_id} from {car_number}. Remaining: {joined}")
+        else:
+            worksheet.update_cell(row, 4, "BO'SH")
+            worksheet.update_cell(row, 5, "")
+            worksheet.update_cell(row, 6, "")
+            logger.info(f"[DRIVER_SHEET] {car_number} has no more orders → BO'SH")
+        return True
+    except Exception as e:
+        logger.error(f"[DRIVER_SHEET] remove_order_from_driver_sheet error for {car_number}: {e}")
         return False
 
 

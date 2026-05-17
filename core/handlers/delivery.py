@@ -9,7 +9,11 @@ from aiogram.fsm.context import FSMContext
 
 from core.config import GROUP_CHAT_ID
 from core.db import get_order, update_order, supabase
-from core.sheets import update_order_status_by_order_id, update_driver_status_sheet
+from core.sheets import (
+    update_order_status_by_order_id,
+    update_driver_status_sheet,
+    remove_order_from_driver_sheet
+)
 from core.states import DeliveryStates
 import core.keyboards as kb
 from core.utils import get_now, format_duration_detailed, parse_dt
@@ -695,24 +699,20 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                     ]
                     await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
                 
-                # Driver status reset — always update Sheets
+                # Driver status reset — remove finished order from driver's sheet list
                 tid = order.get('driver_telegram_id')
                 car_number = order.get('car_number', '')
                 try:
-                    from core.db import get_active_orders_count
-                    active_left = await asyncio.to_thread(get_active_orders_count, tid)
-                    if active_left == 0:
-                        ok = await asyncio.to_thread(update_driver_status_sheet, car_number, "BO'SH", "")
-                        if ok:
-                            logger.info(f"[FINISH] Driver reset: car_number={car_number}, status=BO'SH, current_order_id cleared")
-                        else:
-                            logger.warning(f"[FINISH] Driver reset FAILED (not found in sheet) for car_number={car_number}")
+                    ok = await asyncio.to_thread(remove_order_from_driver_sheet, car_number, order_id)
+                    if ok:
+                        logger.info(f"[FINISH] remove_order_from_driver_sheet OK: car={car_number} order={order_id}")
                     else:
-                        logger.info(f"[FINISH] Driver {car_number} still has {active_left} active orders, keeping YUK OGAN")
+                        logger.warning(f"[FINISH] remove_order_from_driver_sheet failed for car={car_number}")
                 except Exception as dr_err:
-                    logger.error(f"[FINISH] Driver reset error for {car_number}: {dr_err}")
+                    logger.error(f"[FINISH] Driver sheet update error for {car_number}: {dr_err}")
 
                 logger.info(f"[FINISH] Order {order_id} successfully finalized.")
+
 
             except Exception as e:
                 import traceback
