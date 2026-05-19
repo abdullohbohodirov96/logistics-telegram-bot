@@ -81,28 +81,41 @@ def build_interim_report(order):
     )
     return text
 
-async def update_group_report(bot: Bot, order_id: str):
-    if not GROUP_CHAT_ID or str(GROUP_CHAT_ID) == "0": return
+async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
+    """Send/edit interim report to the correct group based on driver's filial."""
     try:
         order = await asyncio.to_thread(get_order, order_id)
         if not order or order.get('current_status') == 'YAKUNLANDI': return
+
+        # Determine correct group
+        from core.config import BRANCHES
+        target_group = override_group_id
+        if not target_group:
+            filial = order.get('filial', '') or ''
+            if filial and filial in BRANCHES:
+                target_group = BRANCHES[filial].get('group_id') or GROUP_CHAT_ID
+            else:
+                target_group = GROUP_CHAT_ID
+
+        if not target_group or str(target_group) == "0": return
+
         text = build_interim_report(order)
-        
         msg_id = order.get('group_message_id')
+
         if msg_id:
             try:
-                await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=text, parse_mode="HTML")
+                await bot.edit_message_text(chat_id=target_group, message_id=int(msg_id), text=text, parse_mode="HTML")
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e).lower():
                     logger.error(f"Group report edit error: {e}")
-                    # Fallback to plain text if HTML fails
-                    try: 
-                        plain_text = text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
-                        await bot.edit_message_text(chat_id=GROUP_CHAT_ID, message_id=int(msg_id), text=plain_text)
+                    try:
+                        plain = text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+                        await bot.edit_message_text(chat_id=target_group, message_id=int(msg_id), text=plain)
                     except: pass
         else:
-            msg = await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode="HTML")
+            msg = await bot.send_message(chat_id=target_group, text=text, parse_mode="HTML")
             asyncio.create_task(asyncio.to_thread(update_order, order_id, {'group_message_id': str(msg.message_id)}))
+
     except Exception as e:
         logger.error(f"Group report error: {e}")
 

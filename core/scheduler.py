@@ -68,8 +68,10 @@ async def check_sheets_job(bot: Bot):
                             'address': order['address'],
                             'cargo': order['cargo'],
                             'comment': order['comment'],
-                            'current_status': 'NEW'
+                            'current_status': 'NEW',
+                            'filial': branch_name,   # ← Qorasaroy yoki Shiribom
                         })
+
 
                     car_number = order['car_number'].strip().upper()
                     driver = drivers.get(car_number)

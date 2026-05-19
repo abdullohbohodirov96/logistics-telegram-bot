@@ -142,20 +142,46 @@ def update_order_status(row_index, status, sheet_name=None):
         logger.error(f"Error update_order_status (sheet={target_sheet}): {e}")
 
 
-def update_order_status_by_order_id(order_id, status):
+def update_order_status_by_order_id(order_id, status, sheet_name=None):
+    """
+    Update order status in correct sheet tab.
+    If sheet_name given — uses it directly.
+    Otherwise searches all branch sheets (orders + Qorasaroy orders) to find the order.
+    """
     client = get_gspread_client()
     if not client: return
     try:
+        from core.config import BRANCHES
         sh = client.open_by_key(GOOGLE_SHEET_ID)
-        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
-        cell = worksheet.find(str(order_id).strip(), in_column=1)
-        if cell:
-            headers = worksheet.row_values(1)
-            status_idx = fuzzy_match_header(headers, ['status', 'holat'])
-            if status_idx != -1:
-                worksheet.update_cell(cell.row, status_idx + 1, status)
+
+        # Build list of sheets to search
+        if sheet_name:
+            sheets_to_try = [sheet_name]
+        else:
+            seen = set()
+            sheets_to_try = []
+            for b in BRANCHES.values():
+                s = b.get('orders_sheet', '')
+                if s and s not in seen:
+                    sheets_to_try.append(s)
+                    seen.add(s)
+
+        for target_sheet in sheets_to_try:
+            try:
+                worksheet = sh.worksheet(target_sheet)
+                cell = worksheet.find(str(order_id).strip(), in_column=1)
+                if cell:
+                    headers = worksheet.row_values(1)
+                    status_idx = fuzzy_match_header(headers, ['status', 'holat'])
+                    if status_idx != -1:
+                        worksheet.update_cell(cell.row, status_idx + 1, status)
+                        logger.info(f"✅ [{target_sheet}] order={order_id} → {status}")
+                    return  # found and updated — stop searching
+            except Exception as e:
+                logger.warning(f"update_order_status_by_order_id: sheet '{target_sheet}' error: {e}")
     except Exception as e:
         logger.error(f"Error update_order_status_by_order_id: {e}")
+
 
 
 def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
