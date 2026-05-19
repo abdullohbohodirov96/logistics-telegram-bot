@@ -692,10 +692,17 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 await asyncio.to_thread(update_order, order_id, {'finished_at': now, 'completed_at': now, 'current_status': 'YAKUNLANDI'})
                 await asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI')
                 
-                if GROUP_CHAT_ID:
+                # Get correct group
+                from core.config import BRANCHES, GROUP_CHAT_ID as DEFAULT_GROUP_ID
+                target_group = DEFAULT_GROUP_ID
+                filial = order.get('filial', '') or ''
+                if filial and filial in BRANCHES:
+                    target_group = BRANCHES[filial].get('group_id') or DEFAULT_GROUP_ID
+
+                if target_group:
                     msg_id = order.get('group_message_id')
                     if msg_id:
-                        try: await bot.delete_message(chat_id=GROUP_CHAT_ID, message_id=int(msg_id))
+                        try: await bot.delete_message(chat_id=target_group, message_id=int(msg_id))
                         except: pass
                     
                     maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
@@ -710,7 +717,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                         InputMediaPhoto(media=order['loaded_photo_file_id'], caption=grp_text, parse_mode="Markdown"),
                         InputMediaPhoto(media=order['act_photo_file_id'])
                     ]
-                    await bot.send_media_group(chat_id=GROUP_CHAT_ID, media=media)
+                    try:
+                        await bot.send_media_group(chat_id=target_group, media=media)
+                    except Exception as e:
+                        logger.error(f"[FINISH] Failed to send media group to {target_group}: {e}")
+
                 
                 # Driver status reset — remove finished order from driver's sheet list
                 tid = order.get('driver_telegram_id')

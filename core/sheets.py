@@ -178,9 +178,11 @@ def update_order_status_by_order_id(order_id, status, sheet_name=None):
                         logger.info(f"✅ [{target_sheet}] order={order_id} → {status}")
                     return  # found and updated — stop searching
             except Exception as e:
-                logger.warning(f"update_order_status_by_order_id: sheet '{target_sheet}' error: {e}")
+                if "CellNotFound" not in str(type(e).__name__):
+                    logger.warning(f"update_order_status_by_order_id: sheet '{target_sheet}' error: {e}")
     except Exception as e:
         logger.error(f"Error update_order_status_by_order_id: {e}")
+
 
 
 
