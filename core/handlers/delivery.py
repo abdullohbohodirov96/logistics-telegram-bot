@@ -89,15 +89,25 @@ async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
 
         # Determine correct group
         from core.config import BRANCHES
+        from core.sheets import get_drivers
         target_group = override_group_id
         if not target_group:
             filial = order.get('filial', '') or ''
+            if not filial:
+                car_number = order.get('car_number', '')
+                if car_number:
+                    drivers = await asyncio.to_thread(get_drivers)
+                    dr = drivers.get(car_number)
+                    if dr:
+                        filial = dr.get('filial', '')
+            
             if filial and filial in BRANCHES:
                 target_group = BRANCHES[filial].get('group_id') or GROUP_CHAT_ID
             else:
                 target_group = GROUP_CHAT_ID
 
         if not target_group or str(target_group) == "0": return
+
 
         text = build_interim_report(order)
         msg_id = order.get('group_message_id')
@@ -694,12 +704,22 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 
                 # Get correct group
                 from core.config import BRANCHES, GROUP_CHAT_ID as DEFAULT_GROUP_ID
+                from core.sheets import get_drivers
                 target_group = DEFAULT_GROUP_ID
                 filial = order.get('filial', '') or ''
+                if not filial:
+                    car_number = order.get('car_number', '')
+                    if car_number:
+                        drivers = await asyncio.to_thread(get_drivers)
+                        dr = drivers.get(car_number)
+                        if dr:
+                            filial = dr.get('filial', '')
+                            
                 if filial and filial in BRANCHES:
                     target_group = BRANCHES[filial].get('group_id') or DEFAULT_GROUP_ID
 
                 if target_group:
+
                     msg_id = order.get('group_message_id')
                     if msg_id:
                         try: await bot.delete_message(chat_id=target_group, message_id=int(msg_id))
