@@ -42,7 +42,7 @@ if service_account_json_str:
 # ── Multi-branch (filial) configuration ───────────────────────────────────────
 # drivers sheet G ustunidagi "filial" nomi bo'yicha guruh va orders sheet aniqlanadi
 BRANCHES = {
-    "Shiribod": {
+    "Shiribom": {
         "group_id": GROUP_CHAT_ID,
         "orders_sheet": ORDERS_SHEET_NAME,
     },
