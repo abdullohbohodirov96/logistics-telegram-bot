@@ -16,7 +16,10 @@ GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID")
 DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers").strip()
 ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders").strip()
 
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
+# Telegram Group IDs
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")                          # Shiribod (asosiy) guruh
+QORASAROY_GROUP_CHAT_ID = os.getenv("QORASAROY_GROUP_CHAT_ID", "") # Qorasaroy guruh
+
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
 
 ADMIN_IDS = []
@@ -26,7 +29,6 @@ if admin_ids_str:
 
 # Credentials check
 service_account_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
-# Backward compatibility
 if not service_account_json_str:
     service_account_json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
@@ -37,23 +39,36 @@ if service_account_json_str:
     except json.JSONDecodeError:
         logger.error("GOOGLE_CREDENTIALS_JSON is not a valid JSON string.")
 
-# Debug logging for Render
+# ── Multi-branch (filial) configuration ───────────────────────────────────────
+# drivers sheet G ustunidagi "filial" nomi bo'yicha guruh va orders sheet aniqlanadi
+BRANCHES = {
+    "Shiribod": {
+        "group_id": GROUP_CHAT_ID,
+        "orders_sheet": ORDERS_SHEET_NAME,
+    },
+    "Qorasaroy": {
+        "group_id": QORASAROY_GROUP_CHAT_ID,
+        "orders_sheet": os.getenv("QORASAROY_ORDERS_SHEET_NAME", "Qorasaroy orders").strip(),
+    },
+}
+
+# Debug logging
 logger.info("--- Google Sheets Config Debug ---")
 logger.info(f"GOOGLE_CREDENTIALS_JSON exists: {bool(service_account_json_str)}")
 logger.info(f"SPREADSHEET_ID exists: {bool(GOOGLE_SHEET_ID)}")
 logger.info(f"DRIVERS_SHEET_NAME: {DRIVERS_SHEET_NAME}")
 logger.info(f"ORDERS_SHEET_NAME: {ORDERS_SHEET_NAME}")
+logger.info(f"GROUP_CHAT_ID (Shiribod): {GROUP_CHAT_ID}")
+logger.info(f"QORASAROY_GROUP_CHAT_ID: {QORASAROY_GROUP_CHAT_ID}")
 logger.info("----------------------------------")
 
 TIMEZONE = "Asia/Tashkent"
 
-# Control Flags
 USE_SHEETS = True
 IS_SHEETS_ENABLED = True
 
 def is_sheets_configured():
     return bool(GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_INFO)
 
-# Webhook configuration
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", "8000"))
