@@ -124,19 +124,23 @@ def get_drivers():
 
 
 
-def update_order_status(row_index, status):
+def update_order_status(row_index, status, sheet_name=None):
+    """Update order status in the correct sheet tab."""
+    from core.config import ORDERS_SHEET_NAME
     client = get_gspread_client()
     if not client: return
+    target_sheet = sheet_name or ORDERS_SHEET_NAME
     try:
         sh = client.open_by_key(GOOGLE_SHEET_ID)
-        worksheet = sh.worksheet(ORDERS_SHEET_NAME)
+        worksheet = sh.worksheet(target_sheet)
         headers = worksheet.row_values(1)
         status_idx = fuzzy_match_header(headers, ['status', 'holat'])
         if status_idx != -1:
             worksheet.update_cell(row_index, status_idx + 1, status)
-            logger.info(f"✅ Sheets Row {row_index} -> {status}")
+            logger.info(f"✅ [{target_sheet}] Row {row_index} → {status}")
     except Exception as e:
-        logger.error(f"Error update_order_status: {e}")
+        logger.error(f"Error update_order_status (sheet={target_sheet}): {e}")
+
 
 def update_order_status_by_order_id(order_id, status):
     client = get_gspread_client()
