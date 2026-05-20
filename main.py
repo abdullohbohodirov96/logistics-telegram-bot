@@ -13,6 +13,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 async def main():
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN is not set. Exiting.")
@@ -22,42 +23,62 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Forceful cleanup
-    logger.info("Aggressive cleanup: clearing webhooks and waiting 5s for zombie processes...")
+    # Webhook tozalash (sleep yo'q — keraksiz)
+    logger.info("Clearing webhooks...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.sleep(5)
 
-    # Start Google Sheets scheduler
+    # Google Sheets scheduler
     if is_sheets_configured():
         try:
             from core.scheduler import check_sheets_job, send_daily_report_job, send_driver_reminders
-            logger.info(f"Starting Google Sheets polling job (interval: {POLL_INTERVAL_SECONDS}s)...")
+
+            # Minimal interval: 60 soniya (429 limit uchun)
+            interval = max(POLL_INTERVAL_SECONDS, 60)
+            logger.info(f"Starting scheduler (interval: {interval}s)...")
+
             scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-            scheduler.add_job(check_sheets_job, 'interval', seconds=POLL_INTERVAL_SECONDS, args=[bot])
 
-            # Daily report at 22:00 Tashkent
-            scheduler.add_job(send_daily_report_job, 'cron', hour=22, minute=0, args=[bot])
+            # max_instances=1 — overlap bo'lmaydi (lock bilan ham himoyalangan)
+            scheduler.add_job(
+                check_sheets_job, 'interval',
+                seconds=interval,
+                args=[bot],
+                max_instances=1,
+                misfire_grace_time=30
+            )
 
-            # 30-minute driver reminders
-            scheduler.add_job(send_driver_reminders, 'interval', minutes=30, args=[bot])
+            # Kunlik hisobot 22:00
+            scheduler.add_job(
+                send_daily_report_job, 'cron',
+                hour=22, minute=0,
+                args=[bot],
+                max_instances=1
+            )
+
+            # 30 daqiqalik eslatmalar
+            scheduler.add_job(
+                send_driver_reminders, 'interval',
+                minutes=30,
+                args=[bot],
+                max_instances=1
+            )
 
             scheduler.start()
             logger.info("✅ All scheduler jobs started.")
         except Exception as e:
             logger.error(f"Failed to start scheduler: {e}")
 
-
-    # Polling mode (Standard for Worker)
-    logger.info("Starting Bot in Polling mode (Worker style)...")
+    logger.info("Starting Bot in Polling mode...")
     try:
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"Critical Worker error: {e}")
+        logger.error(f"Critical error: {e}")
     finally:
         await bot.session.close()
+
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot execution stopped.")
+        logger.info("Bot stopped.")

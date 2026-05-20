@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 PROCESSED_ORDERS = {}
 
+# Lock: bir vaqtda faqat bitta check_sheets_job ishlaydi
+_job_lock = asyncio.Lock()
+
 
 def _get_group_id_for_driver(driver: dict) -> str:
     """Return the correct Telegram group_id based on driver's filial."""
@@ -24,141 +27,149 @@ def _get_group_id_for_driver(driver: dict) -> str:
     if filial and filial in BRANCHES:
         gid = BRANCHES[filial].get('group_id', GROUP_CHAT_ID)
         return gid or GROUP_CHAT_ID
-    return GROUP_CHAT_ID  # default: Shiribod
+    return GROUP_CHAT_ID
 
 
-# ─── 1. Check all branches for new orders ──────────────────────────────────────
+# ─── 1. Check all branches for new orders ────────────────────────────────────
 
 async def check_sheets_job(bot: Bot):
-    try:
-        from core.config import BRANCHES
-        drivers = await asyncio.to_thread(get_drivers)
+    """
+    Polls all branch sheets for new orders.
+    - Uses asyncio.Lock() to prevent overlap.
+    - Adds 3s delay between branches to avoid 429 rate limit.
+    - Adds 1s delay between orders within a branch.
+    """
+    if _job_lock.locked():
+        logger.warning("[SCHEDULER] Previous job still running, skipping this tick.")
+        return
 
-        for branch_name, branch_cfg in BRANCHES.items():
-            sheet_name = branch_cfg.get("orders_sheet")
-            group_id = branch_cfg.get("group_id")
+    async with _job_lock:
+        try:
+            from core.config import BRANCHES
+            drivers = await asyncio.to_thread(get_drivers)
 
-            if not sheet_name:
-                continue
+            for branch_idx, (branch_name, branch_cfg) in enumerate(BRANCHES.items()):
+                sheet_name = branch_cfg.get("orders_sheet")
+                group_id = branch_cfg.get("group_id")
 
-            logger.info(f"🔍 [{branch_name}] Checking sheet: '{sheet_name}'...")
-            new_orders = await asyncio.to_thread(get_new_orders, sheet_name)
-
-            if not new_orders:
-                logger.info(f"✅ [{branch_name}] No new orders in '{sheet_name}'.")
-                continue
-
-            logger.info(f"📝 [{branch_name}] Found {len(new_orders)} new orders.")
-
-            for order in new_orders:
-                order_id = order['order_id']
-                if order_id in PROCESSED_ORDERS:
-                    logger.info(f"⏭ Skipping #{order_id} (already processed).")
+                if not sheet_name:
                     continue
 
-                try:
-                    logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
+                # 3s delay between branches (except first)
+                if branch_idx > 0:
+                    await asyncio.sleep(3)
 
-                    # Ensure in DB
-                    db_order = await asyncio.to_thread(get_order, order_id)
-                    if not db_order:
-                        await asyncio.to_thread(create_order, {
-                            'order_id': order_id,
-                            'car_number': order['car_number'],
-                            'address': order['address'],
-                            'cargo': order['cargo'],
-                            'comment': order['comment'],
-                            'current_status': 'NEW'
-                        })
+                logger.info(f"🔍 [{branch_name}] Checking sheet: '{sheet_name}'...")
+                new_orders = await asyncio.to_thread(get_new_orders, sheet_name)
 
+                if not new_orders:
+                    logger.info(f"✅ [{branch_name}] No new orders in '{sheet_name}'.")
+                    continue
 
+                logger.info(f"📝 [{branch_name}] Found {len(new_orders)} new orders.")
 
-                    car_number = order['car_number'].strip().upper()
-                    driver = drivers.get(car_number)
-
-                    if not driver:
-                        logger.error(f"❌ Driver not found for car '{car_number}' (#{order_id}).")
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND', sheet_name)
+                for order in new_orders:
+                    order_id = order['order_id']
+                    if order_id in PROCESSED_ORDERS:
+                        logger.info(f"⏭ Skipping #{order_id} (already processed).")
                         continue
-
-                    telegram_id = driver['telegram_id']
-                    if not telegram_id:
-                        logger.error(f"❌ No Telegram ID for driver '{driver.get('driver_name')}'.")
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID', sheet_name)
-                        continue
-
-                    # Max 3 active orders per driver
-                    from core.db import get_active_orders_count
-                    active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
-                    if active_count >= 3:
-                        logger.warning(f"⚠️ [{car_number}] has {active_count} active orders. Skipping #{order_id}.")
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_BUSY_3', sheet_name)
-                        continue
-
-                    # Build message
-                    active_note = (
-                        f"\n\n⚠️ *Diqqat: sizda allaqachon {active_count} ta aktiv buyurtma bor!*"
-                        if active_count > 0 else ""
-                    )
-                    msg_text = (
-                        f"🆕 *YANGI BUYURTMA!*\n\n"
-                        f"🆔 *ID:* {order_id}\n"
-                        f"🏢 *Filial:* {branch_name}\n"
-                        f"📍 *Manzil:* {order['address']}\n"
-                        f"📦 *Yuk:* {order['cargo']}\n"
-                        f"📝 *Izoh:* {order['comment']}"
-                        f"{active_note}"
-                    )
 
                     try:
-                        await bot.send_message(
-                            chat_id=telegram_id,
-                            text=msg_text,
-                            parse_mode="Markdown",
-                            reply_markup=kb.get_take_delivery_kb(order_id)
+                        logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
+
+                        # Ensure in DB
+                        db_order = await asyncio.to_thread(get_order, order_id)
+                        if not db_order:
+                            await asyncio.to_thread(create_order, {
+                                'order_id':      order_id,
+                                'car_number':    order['car_number'],
+                                'address':       order['address'],
+                                'cargo':         order['cargo'],
+                                'comment':       order['comment'],
+                                'current_status':'NEW',
+                                'filial':        branch_name,
+                            })
+
+                        car_number = order['car_number'].strip().upper()
+                        driver = drivers.get(car_number)
+
+                        if not driver:
+                            logger.error(f"❌ Driver not found for car '{car_number}' (#{order_id}).")
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND', sheet_name)
+                            continue
+
+                        telegram_id = driver['telegram_id']
+                        if not telegram_id:
+                            logger.error(f"❌ No Telegram ID for driver '{driver.get('driver_name')}'.")
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID', sheet_name)
+                            continue
+
+                        # Max 3 active orders per driver
+                        from core.db import get_active_orders_count
+                        active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
+                        if active_count >= 3:
+                            logger.warning(f"⚠️ [{car_number}] has {active_count} active orders. Skipping #{order_id}.")
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_BUSY_3', sheet_name)
+                            continue
+
+                        active_note = (
+                            f"\n\n⚠️ *Diqqat: sizda allaqachon {active_count} ta aktiv buyurtma bor!*"
+                            if active_count > 0 else ""
                         )
-                        logger.info(f"✉️ #{order_id} sent to {driver.get('driver_name')} (TID: {telegram_id}).")
-                    except Exception as tg_err:
-                        logger.error(f"❌ Failed to send to {telegram_id}: {tg_err}")
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_TG_SEND_FAILED', sheet_name)
-                        continue
+                        msg_text = (
+                            f"🆕 *YANGI BUYURTMA!*\n\n"
+                            f"🆔 *ID:* {order_id}\n"
+                            f"🏢 *Filial:* {branch_name}\n"
+                            f"📍 *Manzil:* {order['address']}\n"
+                            f"📦 *Yuk:* {order['cargo']}\n"
+                            f"📝 *Izoh:* {order['comment']}"
+                            f"{active_note}"
+                        )
 
-                    # Update Sheets
-                    await asyncio.to_thread(update_order_status, order['row_index'], 'SENT', sheet_name)
-                    await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
+                        try:
+                            await bot.send_message(
+                                chat_id=telegram_id,
+                                text=msg_text,
+                                parse_mode="Markdown",
+                                reply_markup=kb.get_take_delivery_kb(order_id)
+                            )
+                            logger.info(f"✉️ #{order_id} sent to {driver.get('driver_name')} (TID: {telegram_id}).")
+                        except Exception as tg_err:
+                            logger.error(f"❌ Failed to send to {telegram_id}: {tg_err}")
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_TG_SEND_FAILED', sheet_name)
+                            continue
 
-                    # Write active count to orders sheet G col
-                    new_active_count = active_count + 1
-                    await asyncio.to_thread(write_driver_order_count_to_orders_sheet, order_id, new_active_count)
+                        # Update Sheets — 1 second delay before each write to avoid 429
+                        await asyncio.sleep(1)
+                        await asyncio.to_thread(update_order_status, order['row_index'], 'SENT', sheet_name)
 
-                    PROCESSED_ORDERS[order_id] = True
+                        await asyncio.sleep(1)
+                        await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
 
-                    # Group report to the driver's filial group
-                    driver_group_id = _get_group_id_for_driver(driver) or group_id
-                    from core.handlers.delivery import update_group_report
-                    await update_group_report(bot, order_id, override_group_id=driver_group_id)
+                        await asyncio.sleep(1)
+                        new_active_count = active_count + 1
+                        await asyncio.to_thread(write_driver_order_count_to_orders_sheet, order_id, new_active_count)
 
-                except Exception as e:
-                    logger.error(f"❌ Error processing #{order_id}: {e}")
+                        PROCESSED_ORDERS[order_id] = True
 
-    except Exception as e:
-        logger.error(f"❌ Critical error in check_sheets_job: {e}")
+                        # Group report
+                        driver_group_id = _get_group_id_for_driver(driver) or group_id
+                        from core.handlers.delivery import update_group_report
+                        await update_group_report(bot, order_id, override_group_id=driver_group_id)
+
+                    except Exception as e:
+                        logger.error(f"❌ Error processing #{order_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Critical error in check_sheets_job: {e}")
 
 
-# ─── 2. update_order_status — accept sheet_name param ──────────────────────────
-
-# Note: update_order_status in sheets.py is called with row_index + status.
-# We pass sheet_name to correctly update the right tab.
-# sheets.py update_order_status needs a sheet_name param — handled below via wrapper.
-
-
-# ─── 3. 30-minute driver reminders ─────────────────────────────────────────────
+# ─── 2. 30-minute driver reminders ───────────────────────────────────────────
 
 async def send_driver_reminders(bot: Bot):
     try:
         from core.db import get_active_orders
         from core.config import TIMEZONE
-        import pytz
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
 
@@ -178,9 +189,12 @@ async def send_driver_reminders(bot: Bot):
                 continue
 
             last_at = (
-                order.get('delivered_location_at') or order.get('act_photo_at') or
-                order.get('on_way_at') or order.get('loaded_photo_at') or
-                order.get('accepted_at') or order.get('created_at')
+                order.get('delivered_location_at') or
+                order.get('act_photo_at') or
+                order.get('on_way_at') or
+                order.get('loaded_photo_at') or
+                order.get('accepted_at') or
+                order.get('created_at')
             )
             if not last_at:
                 continue
@@ -230,7 +244,7 @@ async def send_driver_reminders(bot: Bot):
         logger.error(f"[REMINDER] Critical error: {e}")
 
 
-# ─── 4. Daily report at 22:00 — split by filial ────────────────────────────────
+# ─── 3. Daily report at 22:00 ────────────────────────────────────────────────
 
 async def send_daily_report_job(bot: Bot):
     try:
@@ -243,63 +257,52 @@ async def send_daily_report_job(bot: Bot):
         date_str = now.strftime('%d.%m.%Y')
 
         start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_dt = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        end_dt   = now.replace(hour=23, minute=59, second=59, microsecond=0)
 
         done_orders = await asyncio.to_thread(get_orders_by_date_range, start_dt.isoformat(), end_dt.isoformat())
-        all_active = await asyncio.to_thread(get_active_orders)
+        all_active  = await asyncio.to_thread(get_active_orders)
         active_orders = [o for o in all_active if o.get('current_status') not in ('YAKUNLANDI', 'NEW')]
 
-        # Get driver filial info from Sheets
         drivers_info = await asyncio.to_thread(get_drivers)
-        # Build tid -> filial map
         tid_to_filial = {}
-        tid_to_car = {}
         for car, d in drivers_info.items():
             tid = str(d.get('telegram_id', ''))
             if tid:
                 tid_to_filial[tid] = d.get('filial', '')
-                tid_to_car[tid] = car
 
-        # Group completed orders by filial
-        filial_stats = {}   # {filial_name: {tid: {name, car, count, total_sec}}}
+        # Group by filial
+        filial_stats = {}
         for o in done_orders:
-            tid = str(o.get('driver_telegram_id', '') or '')
-            filial = tid_to_filial.get(tid, 'Shiribod')  # default Shiribod
-            if not filial:
-                filial = 'Shiribod'
-
+            tid    = str(o.get('driver_telegram_id', '') or '')
+            filial = tid_to_filial.get(tid, 'Shiribod') or 'Shiribod'
             if filial not in filial_stats:
                 filial_stats[filial] = {}
-
             if tid not in filial_stats[filial]:
                 filial_stats[filial][tid] = {
                     'name': o.get('driver_name', '-'),
-                    'car': o.get('car_number', '-'),
-                    'count': 0,
-                    'total_seconds': 0
+                    'car':  o.get('car_number', '-'),
+                    'count': 0, 'total_seconds': 0
                 }
             filial_stats[filial][tid]['count'] += 1
             diff = get_seconds_diff(o.get('accepted_at'), o.get('completed_at'))
             if diff and diff > 0:
                 filial_stats[filial][tid]['total_seconds'] += diff
 
-        # Group active orders by filial
-        filial_active = {}  # {filial_name: [orders]}
+        filial_active = {}
         for o in active_orders:
-            tid = str(o.get('driver_telegram_id', '') or '')
+            tid    = str(o.get('driver_telegram_id', '') or '')
             filial = tid_to_filial.get(tid, 'Shiribod') or 'Shiribod'
             filial_active.setdefault(filial, []).append(o)
 
         medals = ["🥇", "🥈", "🥉"]
 
-        # Send report to each branch's group
         for branch_name, branch_cfg in BRANCHES.items():
             group_id = branch_cfg.get("group_id")
             if not group_id:
                 continue
 
-            stats = filial_stats.get(branch_name, {})
-            active = filial_active.get(branch_name, [])
+            stats   = filial_stats.get(branch_name, {})
+            active  = filial_active.get(branch_name, [])
             ranking = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
 
             lines = [
@@ -312,78 +315,63 @@ async def send_daily_report_job(bot: Bot):
             if ranking:
                 lines.append("🏆 *Haydovchilar reytingi:*")
                 for i, (tid, s) in enumerate(ranking):
-                    count = s['count']
+                    count     = s['count']
                     total_sec = s['total_seconds']
-
-                    # Avg time — correctly calculated
                     if count > 0 and total_sec > 0:
                         avg_sec = total_sec // count
-                        avg_h = avg_sec // 3600
-                        avg_m = (avg_sec % 3600) // 60
-                        if avg_h > 0:
-                            avg_str = f"{avg_h}s {avg_m}dq"
-                        else:
-                            avg_str = f"{avg_m} daqiqa"
+                        avg_h   = avg_sec // 3600
+                        avg_m   = (avg_sec % 3600) // 60
+                        avg_str = f"{avg_h}s {avg_m}dq" if avg_h > 0 else f"{avg_m} daqiqa"
                     else:
                         avg_str = "—"
-
                     medal = medals[i] if i < 3 else f"{i+1}."
-                    lines.append(
-                        f"{medal} *{s['car']}* — {s['name']} — {count} reys | avg: {avg_str}"
-                    )
+                    lines.append(f"{medal} *{s['car']}* — {s['name']} — {count} reys | avg: {avg_str}")
             else:
                 lines.append("📉 Bugun yakunlangan reys yo'q.")
 
-            # Unfinished orders section
             if active:
                 lines.append("\n⏳ *Yakunlanmagan buyurtmalar:*")
                 for o in active[:10]:
-                    acc = o.get('accepted_at')
-                    if acc:
-                        acc_dt = parse_dt(acc)
-                        elapsed = int((now - acc_dt).total_seconds() / 60) if acc_dt else 0
-                        lines.append(
-                            f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} "
-                            f"| #{o.get('order_id','-')} | {elapsed} daqiqa"
-                        )
-                    else:
-                        lines.append(
-                            f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} | #{o.get('order_id','-')}"
-                        )
-
-            msg_group = "\n".join(lines)
+                    acc    = o.get('accepted_at')
+                    acc_dt = parse_dt(acc) if acc else None
+                    elapsed = int((now - acc_dt).total_seconds() / 60) if acc_dt else 0
+                    lines.append(
+                        f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} "
+                        f"| #{o.get('order_id','-')} | {elapsed} daqiqa"
+                    )
 
             try:
-                await bot.send_message(chat_id=group_id, text=msg_group, parse_mode="Markdown")
-                logger.info(f"✅ Daily report sent to {branch_name} group ({group_id}).")
+                await bot.send_message(
+                    chat_id=group_id,
+                    text="\n".join(lines),
+                    parse_mode="Markdown"
+                )
+                logger.info(f"✅ Daily report sent to {branch_name} ({group_id}).")
             except Exception as e:
-                logger.error(f"Failed to send daily report to {branch_name} ({group_id}): {e}")
+                logger.error(f"Failed to send daily report to {branch_name}: {e}")
 
-        # Send private stats to each driver
+        # Private stats to each driver
         all_stats = {}
         for filial_s in filial_stats.values():
             all_stats.update(filial_s)
 
-        ranking_all = sorted(all_stats.items(), key=lambda x: x[1]['count'], reverse=True)
-        for i, (tid, s) in enumerate(ranking_all):
-            count = s['count']
+        for i, (tid, s) in enumerate(sorted(all_stats.items(), key=lambda x: x[1]['count'], reverse=True)):
+            count     = s['count']
             total_sec = s['total_seconds']
-            if count > 0 and total_sec > 0:
-                avg_m = (total_sec // count) // 60
-                avg_str = f"{avg_m} daqiqa"
-            else:
-                avg_str = "—"
-
+            avg_str   = f"{(total_sec // count) // 60} daqiqa" if count > 0 and total_sec > 0 else "—"
             medal = medals[i] if i < 3 else ""
             rank_note = f"\n🎊 Siz bugungi reytingda {i+1}-orinni egalladingiz! {medal}" if i < 3 else ""
-            msg_private = (
-                f"📊 *Kunlik hisobotingiz ({date_str})*\n\n"
-                f"✅ Reyslar: *{count} ta*\n"
-                f"⏱ O'rtacha vaqt: *{avg_str}*"
-                f"{rank_note}"
-            )
             try:
-                await bot.send_message(chat_id=tid, text=msg_private, parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=tid,
+                    text=(
+                        f"📊 *Kunlik hisobotingiz ({date_str})*\n\n"
+                        f"✅ Reyslar: *{count} ta*\n"
+                        f"⏱ O'rtacha vaqt: *{avg_str}*"
+                        f"{rank_note}"
+                    ),
+                    parse_mode="Markdown"
+                )
             except Exception as e:
                 logger.error(f"Failed to send private report to {tid}: {e}")
 
