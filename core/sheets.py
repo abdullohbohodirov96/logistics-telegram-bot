@@ -115,10 +115,19 @@ def get_new_orders(sheet_name=None):
         return []
 
 
+_DRIVERS_CACHE = {}
+_DRIVERS_CACHE_TIME = 0
+
 # ── get_drivers ───────────────────────────────────────────────────────────────
 
 def get_drivers():
     """Returns {car_number: {driver_name, telegram_id, filial, status}}."""
+    global _DRIVERS_CACHE, _DRIVERS_CACHE_TIME
+    
+    # Cache for 60 seconds to avoid massive 429 Rate Limits
+    if _DRIVERS_CACHE and time.time() - _DRIVERS_CACHE_TIME < 60:
+        return _DRIVERS_CACHE
+
     client = get_gspread_client()
     if not client:
         return {}
@@ -147,10 +156,13 @@ def get_drivers():
                 'filial':      filial,
                 'status':      status,
             }
+            
+        _DRIVERS_CACHE = drivers
+        _DRIVERS_CACHE_TIME = time.time()
         return drivers
     except Exception as e:
         logger.error(f"Error get_drivers: {e}")
-        return {}
+        return _DRIVERS_CACHE or {}
 
 
 # ── update_order_status (by row index) ───────────────────────────────────────
