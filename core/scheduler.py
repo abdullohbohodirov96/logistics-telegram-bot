@@ -269,11 +269,17 @@ async def send_daily_report_job(bot: Bot):
             if tid:
                 tid_to_filial[tid] = d.get('filial', '')
 
+        # Birinchi branch nomi — filiali noma'lum haydovchilar uchun default
+        default_branch = list(BRANCHES.keys())[0]
+
         # Group by filial
         filial_stats = {}
         for o in done_orders:
             tid    = str(o.get('driver_telegram_id', '') or '')
-            filial = tid_to_filial.get(tid, 'Shiribod') or 'Shiribod'
+            filial = tid_to_filial.get(tid, '') or ''
+            # Agar filial bo'sh yoki BRANCHES da yo'q bo'lsa — default branchga qo'shamiz
+            if filial not in BRANCHES:
+                filial = default_branch
             if filial not in filial_stats:
                 filial_stats[filial] = {}
             if tid not in filial_stats[filial]:
@@ -290,7 +296,9 @@ async def send_daily_report_job(bot: Bot):
         filial_active = {}
         for o in active_orders:
             tid    = str(o.get('driver_telegram_id', '') or '')
-            filial = tid_to_filial.get(tid, 'Shiribod') or 'Shiribod'
+            filial = tid_to_filial.get(tid, '') or ''
+            if filial not in BRANCHES:
+                filial = default_branch
             filial_active.setdefault(filial, []).append(o)
 
         medals = ["🥇", "🥈", "🥉"]

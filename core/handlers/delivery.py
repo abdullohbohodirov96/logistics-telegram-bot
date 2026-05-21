@@ -644,14 +644,13 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
             d_str = format_duration_detailed(item.get('duration_seconds'))
             status_val = item.get('status', 'oldim')
             emoji_val = item.get('emoji', '✅')
-            
-            # Full version for group
-            full_line = f"{item.get('color', '🟩')} {item['stage']}: {emoji_val} {status_val} — {d_str} ({item.get('completed_at', '-')})"
+            completed_at = item.get('completed_at', '-')
+
+            full_line = f"{item.get('color', '🟩')} {item['stage']}: {emoji_val} {status_val} — {d_str} ({completed_at})"
             history_lines_full.append(full_line)
-            
-            # Short version for driver
-            short_status = "oldi" if status_val.lower() == "oldi" else status_val
-            history_lines_short.append(f"{item.get('color', '🟩')} {item['stage']}: {short_status}")
+
+            # Driver version — same as full but without color emoji
+            history_lines_short.append(f"{emoji_val} {item['stage']}: {status_val} ({completed_at}) — {d_str}")
         
         # Last action time for next duration calculation
         last_action_at = stage_history[-1]['full_at'] if stage_history else order.get('accepted_at')
@@ -664,11 +663,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 st_text = status if status else ("yuborildi" if "Lokatsiya" in label else "olindi" if "rasmi" in label else "bosildi")
                 icon = ok_icon if is_ok else fail_icon
                 color = emoji_ok if is_ok else emoji_fail
-                
+
                 full = f"{color} {label}: {icon} {st_text.upper()} — {d_str} ({dt_formatted})"
-                short = f"{color} {label}: {st_text}"
+                short = f"{icon} {label}: {st_text} ({dt_formatted}) — {d_str}"
                 return full, short
-            return f"{emoji_fail} {label}: ❌ YUBORILMADI", f"{emoji_fail} {label}: yuborilmadi"
+            return f"{emoji_fail} {label}: ❌ YUBORILMADI", f"❌ {label}: yuborilmadi"
 
         full_yuk, short_yuk = get_lines("Yuk rasmi", "", last_action_at, order.get('loaded_photo_at'), "", "📸", "📸")
         full_way, short_way = get_lines("Yo'lga chiqish", "", order.get('loaded_photo_at'), order.get('on_way_at'), "", "🛣", "🛣")
