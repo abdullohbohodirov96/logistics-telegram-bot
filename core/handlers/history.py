@@ -5,7 +5,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from core.db import get_history, get_order, get_order_steps
 import core.keyboards as kb
-from core.utils import parse_dt, format_time, format_duration, get_order_start_time
+from core.utils import parse_dt, format_time, format_duration
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -106,15 +106,17 @@ async def my_history(message: Message):
         await message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
         
     if total_pages > 1:
-        await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
+        nav_kb = kb.get_driver_pagination_kb(page, total_pages)
+        if nav_kb:
+            await message.answer(f"Sahifa {page}/{total_pages}", reply_markup=nav_kb)
     logger.info(f"my_history took {time.time()-t0:.2f}s")
 
 @router.callback_query(F.data.startswith("m:p:") | F.data.startswith("m:n:"))
 async def paginate_my_history(callback: CallbackQuery):
     t0 = time.time()
     await callback.answer()
-    action, page_str = callback.data.split(":")[1:]
-    page = int(page_str)
+    parts = callback.data.split(":")
+    page = int(parts[2])
     tid = callback.from_user.id
     history = await asyncio.to_thread(get_history, 'drv', str(tid))
     
@@ -126,8 +128,10 @@ async def paginate_my_history(callback: CallbackQuery):
     for order in items:
         text = await asyncio.to_thread(format_delivery_short, order)
         await callback.message.answer(text, reply_markup=kb.get_order_detail_kb(order['order_id']))
-        
-    await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=kb.get_driver_pagination_kb(page, total_pages))
+
+    nav_kb = kb.get_driver_pagination_kb(page, total_pages)
+    if nav_kb:
+        await callback.message.answer(f"Sahifa {page}/{total_pages}", reply_markup=nav_kb)
     logger.info(f"paginate_my_history took {time.time()-t0:.2f}s")
 
 @router.callback_query(F.data.startswith("detail:"))

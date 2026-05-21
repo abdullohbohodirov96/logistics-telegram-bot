@@ -83,6 +83,15 @@ def get_pagination_kb(page: int, total: int):
     if page < total: row.append(InlineKeyboardButton(text="➡️", callback_data=f"h:n:{page+1}"))
     return InlineKeyboardMarkup(inline_keyboard=[row, [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]])
 
+def get_driver_pagination_kb(page: int, total: int):
+    """Driver tarix sahifalash tugmalari — m:p: va m:n: callbacklari."""
+    row = []
+    if page > 1: row.append(InlineKeyboardButton(text="⬅️", callback_data=f"m:p:{page-1}"))
+    if page < total: row.append(InlineKeyboardButton(text="➡️", callback_data=f"m:n:{page+1}"))
+    if not row:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
 def get_order_detail_kb(order_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Batafsil", callback_data=f"detail:{order_id}")]])
 
