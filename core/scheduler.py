@@ -86,8 +86,7 @@ async def check_sheets_job(bot: Bot):
                                 'address':       order['address'],
                                 'cargo':         order['cargo'],
                                 'comment':       order['comment'],
-                                'current_status':'NEW',
-                                'filial':        branch_name,
+                                'current_status':'NEW'
                             })
 
                         car_number = order['car_number'].strip().upper()
