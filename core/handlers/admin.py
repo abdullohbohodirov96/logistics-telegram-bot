@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -61,7 +61,8 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="🏆 Umumiy reyting",        callback_data="adm_rating")],
         [InlineKeyboardButton(text="🚛 Haydovchilar holati",   callback_data="adm_cars_status")],
         [InlineKeyboardButton(text="📣 Guruhga hisobot yuborish", callback_data="adm_send_group_report")],
-        [InlineKeyboardButton(text="❌ Yopish",                callback_data="adm_close")],
+        [InlineKeyboardButton(text="📥 Menga hisobot yuborish",  callback_data="adm_send_me_report")],
+        [InlineKeyboardButton(text="❌ Yopish",                 callback_data="adm_close")],
     ])
 
 def _date_range(now, kind: str):
@@ -567,6 +568,66 @@ async def send_group_report(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"adm_send_group_report error: {e}")
         await callback.message.answer("⚠️ Xatolik yuz berdi.", reply_markup=_back_kb())
+
+
+# ─── Send report to admin's own chat ──────────────────────────────────────────
+
+async def _get_today_report_text() -> str:
+    """Build today's full report text (reusable)."""
+    from core.scheduler import _build_daily_report_text
+    from core.db import get_orders_by_date_range, get_active_orders
+    from core.config import TIMEZONE
+    import pytz
+    from datetime import datetime
+    import asyncio as _asyncio
+
+    tzinfo = pytz.timezone(TIMEZONE)
+    now = datetime.now(tzinfo)
+    date_str = now.strftime('%d.%m.%Y')
+    start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_dt   = now.replace(hour=23, minute=59, second=59, microsecond=0)
+
+    done_orders   = await _asyncio.to_thread(get_orders_by_date_range, start_dt.isoformat(), end_dt.isoformat())
+    all_active    = await _asyncio.to_thread(get_active_orders)
+    active_orders = [o for o in all_active if o.get('current_status') not in ('YAKUNLANDI', 'NEW')]
+    return _build_daily_report_text(date_str, done_orders, active_orders, now)
+
+
+@router.callback_query(F.data == "adm_send_me_report")
+async def send_me_report(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True)
+        return
+    await callback.answer("⏳ Hisobot tayyorlanmoqda...")
+    try:
+        text = await _get_today_report_text()
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=chunk,
+                parse_mode="Markdown"
+            )
+        await callback.message.answer("✅ Hisobot shaxsiy chatga yuborildi.", reply_markup=_back_kb())
+    except Exception as e:
+        logger.error(f"adm_send_me_report error: {e}")
+        await callback.message.answer("⚠️ Xatolik yuz berdi.", reply_markup=_back_kb())
+
+
+@router.message(Command("hisobot"))
+async def cmd_hisobot(message: Message):
+    """Admin-only: get today's full report in private chat."""
+    if not _is_admin(message.from_user.id):
+        await message.answer("⛔ Bu buyruq faqat adminlar uchun.")
+        return
+    try:
+        text = await _get_today_report_text()
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            await message.answer(chunk, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"/hisobot error: {e}")
+        await message.answer("⚠️ Hisobot olishda xatolik yuz berdi.")
 
 
 # ─── Stale/unknown callbacks ───────────────────────────────────────────────────

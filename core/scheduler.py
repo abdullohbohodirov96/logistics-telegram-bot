@@ -344,6 +344,19 @@ async def send_daily_report_job(bot: Bot):
         if not sent_groups:
             logger.warning("⚠️ No groups configured to receive daily report.")
 
+        # Adminlarga shaxsiy to'liq hisobot
+        from core.config import ADMIN_IDS
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=report_text,
+                    parse_mode="Markdown"
+                )
+                logger.info(f"✅ Daily report sent to admin {admin_id}.")
+            except Exception as e:
+                logger.error(f"Failed to send daily report to admin {admin_id}: {e}")
+
         # Har bir haydovchiga shaxsiy hisobot
         medals = ["🥇", "🥈", "🥉"]
         drv_stats = {}
