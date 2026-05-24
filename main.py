@@ -27,18 +27,16 @@ async def main():
     logger.info("Clearing webhooks...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Google Sheets scheduler
-    if is_sheets_configured():
-        try:
-            from core.scheduler import check_sheets_job, send_daily_report_job, send_driver_reminders
+    # Scheduler — har doim ishlaydigan joblar + sheets polling (agar konfiguratsiya bo'lsa)
+    try:
+        from core.scheduler import send_daily_report_job, send_driver_reminders
 
-            # Minimal interval: 60 soniya (429 limit uchun)
+        scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
+
+        if is_sheets_configured():
+            from core.scheduler import check_sheets_job
             interval = max(POLL_INTERVAL_SECONDS, 60)
-            logger.info(f"Starting scheduler (interval: {interval}s)...")
-
-            scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-
-            # max_instances=1 — overlap bo'lmaydi (lock bilan ham himoyalangan)
+            logger.info(f"Starting sheets polling (interval: {interval}s)...")
             scheduler.add_job(
                 check_sheets_job, 'interval',
                 seconds=interval,
@@ -47,26 +45,26 @@ async def main():
                 misfire_grace_time=30
             )
 
-            # Kunlik hisobot 22:00
-            scheduler.add_job(
-                send_daily_report_job, 'cron',
-                hour=22, minute=0,
-                args=[bot],
-                max_instances=1
-            )
+        # Kunlik hisobot 22:00 — sheets konfiguratsiyasidan mustaqil ishlaydi
+        scheduler.add_job(
+            send_daily_report_job, 'cron',
+            hour=22, minute=0,
+            args=[bot],
+            max_instances=1
+        )
 
-            # 30 daqiqalik eslatmalar
-            scheduler.add_job(
-                send_driver_reminders, 'interval',
-                minutes=30,
-                args=[bot],
-                max_instances=1
-            )
+        # 30 daqiqalik eslatmalar
+        scheduler.add_job(
+            send_driver_reminders, 'interval',
+            minutes=30,
+            args=[bot],
+            max_instances=1
+        )
 
-            scheduler.start()
-            logger.info("✅ All scheduler jobs started.")
-        except Exception as e:
-            logger.error(f"Failed to start scheduler: {e}")
+        scheduler.start()
+        logger.info("✅ Scheduler started.")
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
 
     logger.info("Starting Bot in Polling mode...")
     try:

@@ -31,6 +31,23 @@ def _back_kb():
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]
     ])
 
+async def _safe_send(message, text: str, reply_markup=None, parse_mode="Markdown"):
+    """Send text, splitting into chunks if it exceeds Telegram's 4096 char limit."""
+    limit = 4000
+    chunks = [text[i:i+limit] for i in range(0, len(text), limit)]
+    for idx, chunk in enumerate(chunks):
+        kb = reply_markup if idx == len(chunks) - 1 else None
+        try:
+            if idx == 0:
+                try:
+                    await message.edit_text(chunk, parse_mode=parse_mode, reply_markup=kb)
+                except Exception:
+                    await message.answer(chunk, parse_mode=parse_mode, reply_markup=kb)
+            else:
+                await message.answer(chunk, parse_mode=parse_mode, reply_markup=kb)
+        except Exception:
+            await message.answer(chunk, reply_markup=kb)
+
 def get_admin_panel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Aktiv buyurtmalar",     callback_data="adm_active")],
@@ -43,6 +60,7 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="👤 Haydovchi bo'yicha",    callback_data="adm_by_driver")],
         [InlineKeyboardButton(text="🏆 Umumiy reyting",        callback_data="adm_rating")],
         [InlineKeyboardButton(text="🚛 Haydovchilar holati",   callback_data="adm_cars_status")],
+        [InlineKeyboardButton(text="📣 Guruhga hisobot yuborish", callback_data="adm_send_group_report")],
         [InlineKeyboardButton(text="❌ Yopish",                callback_data="adm_close")],
     ])
 
@@ -242,10 +260,7 @@ async def show_active(callback: CallbackQuery):
     try:
         orders = await asyncio.to_thread(get_active_orders)
         text = _build_active_text(orders)
-        try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=_back_kb())
-        except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
+        await _safe_send(callback.message, text, reply_markup=_back_kb())
     except Exception as e:
         logger.error(f"adm_active error: {e}")
         await callback.message.answer("⚠️ Xatolik yuz berdi.", reply_markup=_back_kb())
@@ -261,10 +276,7 @@ async def _send_date_report(callback: CallbackQuery, kind: str, label: str):
         df, dt = _date_range(now, kind)
         orders = await asyncio.to_thread(get_history, "all", None, df, dt, limit=200)
         text = _build_summary_report(orders, label)
-        try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=_back_kb())
-        except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
+        await _safe_send(callback.message, text, reply_markup=_back_kb())
     except Exception as e:
         logger.error(f"date report ({kind}) error: {e}")
         await callback.message.answer("⚠️ Xatolik yuz berdi.", reply_markup=_back_kb())
@@ -448,10 +460,7 @@ async def show_cars_status(callback: CallbackQuery):
                 f"   📦 Aktiv: {d['active_count']} | Bugun: {d['today_count']} | Jami: {d['total_count']}"
             )
         text = "\n".join(lines)
-        try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=_back_kb())
-        except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
+        await _safe_send(callback.message, text, reply_markup=_back_kb())
     except Exception as e:
         logger.error(f"adm_cars_status error: {e}")
         await callback.message.answer("⚠️ Xatolik.", reply_markup=_back_kb())
@@ -496,13 +505,69 @@ async def show_rating(callback: CallbackQuery):
                 lines.append(f"{medal} *{s['car']}* — {s['name']} — {s['count']} reys (avg {avg} min)")
             text = "\n".join(lines)
 
-        try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=_back_kb())
-        except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
+        await _safe_send(callback.message, text, reply_markup=_back_kb())
     except Exception as e:
         logger.error(f"adm_rating error: {e}")
         await callback.message.answer("⚠️ Xatolik.", reply_markup=_back_kb())
+
+# ─── Send group report manually ───────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm_send_group_report")
+async def send_group_report(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True)
+        return
+    await callback.answer("⏳ Hisobot tayyorlanmoqda...")
+    try:
+        from core.scheduler import _build_daily_report_text
+        from core.db import get_orders_by_date_range, get_active_orders
+        from core.config import BRANCHES, TIMEZONE
+        import pytz
+        from datetime import datetime
+
+        tzinfo = pytz.timezone(TIMEZONE)
+        now = datetime.now(tzinfo)
+        date_str = now.strftime('%d.%m.%Y')
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = now.replace(hour=23, minute=59, second=59, microsecond=0)
+
+        done_orders   = await asyncio.to_thread(get_orders_by_date_range, start_dt.isoformat(), end_dt.isoformat())
+        all_active    = await asyncio.to_thread(get_active_orders)
+        active_orders = [o for o in all_active if o.get('current_status') not in ('YAKUNLANDI', 'NEW')]
+
+        report_text = _build_daily_report_text(date_str, done_orders, active_orders, now)
+
+        sent_groups = set()
+        sent_names  = []
+        for branch_name, branch_cfg in BRANCHES.items():
+            group_id = branch_cfg.get("group_id")
+            if not group_id or group_id in sent_groups:
+                continue
+            try:
+                await callback.bot.send_message(
+                    chat_id=group_id,
+                    text=report_text,
+                    parse_mode="Markdown"
+                )
+                sent_groups.add(group_id)
+                sent_names.append(branch_name)
+            except Exception as e:
+                logger.error(f"adm_send_group_report: failed to send to {branch_name}: {e}")
+
+        if sent_names:
+            await callback.message.answer(
+                f"✅ Hisobot yuborildi: {', '.join(sent_names)}",
+                reply_markup=_back_kb()
+            )
+        else:
+            await callback.message.answer(
+                "⚠️ Hech qaysi guruhga yuborib bo'lmadi. Guruh ID larini tekshiring.",
+                reply_markup=_back_kb()
+            )
+    except Exception as e:
+        logger.error(f"adm_send_group_report error: {e}")
+        await callback.message.answer("⚠️ Xatolik yuz berdi.", reply_markup=_back_kb())
+
 
 # ─── Stale/unknown callbacks ───────────────────────────────────────────────────
 

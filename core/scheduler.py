@@ -245,11 +245,71 @@ async def send_driver_reminders(bot: Bot):
 
 # ─── 3. Daily report at 22:00 ────────────────────────────────────────────────
 
+def _build_daily_report_text(date_str: str, done_orders: list, active_orders: list, now) -> str:
+    """Build a single combined report text for all branches."""
+    from core.utils import get_seconds_diff, parse_dt
+
+    drv_stats = {}
+    for o in done_orders:
+        tid = str(o.get('driver_telegram_id', '') or '')
+        if not tid:
+            continue
+        if tid not in drv_stats:
+            drv_stats[tid] = {
+                'name': o.get('driver_name', '-'),
+                'car':  o.get('car_number', '-'),
+                'count': 0, 'total_seconds': 0
+            }
+        drv_stats[tid]['count'] += 1
+        diff = get_seconds_diff(o.get('accepted_at'), o.get('completed_at'))
+        if diff and diff > 0:
+            drv_stats[tid]['total_seconds'] += diff
+
+    ranking = sorted(drv_stats.items(), key=lambda x: x[1]['count'], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+
+    lines = [
+        f"📊 *Kunlik hisobot — {date_str}*\n",
+        f"✅ Yakunlangan reyslar: *{sum(s['count'] for s in drv_stats.values())} ta*",
+        f"⏳ Hali yakunlanmagan: *{len(active_orders)} ta*\n",
+    ]
+
+    if ranking:
+        lines.append("🏆 *Haydovchilar reytingi:*")
+        for i, (tid, s) in enumerate(ranking):
+            count     = s['count']
+            total_sec = s['total_seconds']
+            if count > 0 and total_sec > 0:
+                avg_sec = total_sec // count
+                avg_h   = avg_sec // 3600
+                avg_m   = (avg_sec % 3600) // 60
+                avg_str = f"{avg_h}s {avg_m}dq" if avg_h > 0 else f"{avg_m} daqiqa"
+            else:
+                avg_str = "—"
+            medal = medals[i] if i < 3 else f"{i+1}."
+            lines.append(f"{medal} *{s['car']}* — {s['name']} — {count} reys | avg: {avg_str}")
+    else:
+        lines.append("📉 Bugun yakunlangan reys yo'q.")
+
+    if active_orders:
+        from core.utils import parse_dt as _parse_dt
+        lines.append("\n⏳ *Yakunlanmagan buyurtmalar:*")
+        for o in active_orders[:10]:
+            acc    = o.get('accepted_at')
+            acc_dt = _parse_dt(acc) if acc else None
+            elapsed = int((now - acc_dt).total_seconds() / 60) if acc_dt else 0
+            lines.append(
+                f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} "
+                f"| #{o.get('order_id','-')} | {elapsed} daqiqa"
+            )
+
+    return "\n".join(lines)
+
+
 async def send_daily_report_job(bot: Bot):
     try:
-        from core.config import GROUP_CHAT_ID, TIMEZONE, BRANCHES
+        from core.config import TIMEZONE, BRANCHES
         from core.db import get_orders_by_date_range, get_active_orders
-        from core.utils import get_seconds_diff, parse_dt
 
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
@@ -262,111 +322,52 @@ async def send_daily_report_job(bot: Bot):
         all_active  = await asyncio.to_thread(get_active_orders)
         active_orders = [o for o in all_active if o.get('current_status') not in ('YAKUNLANDI', 'NEW')]
 
-        drivers_info = await asyncio.to_thread(get_drivers)
-        tid_to_filial = {}
-        for car, d in drivers_info.items():
-            tid = str(d.get('telegram_id', ''))
-            if tid:
-                tid_to_filial[tid] = d.get('filial', '')
+        report_text = _build_daily_report_text(date_str, done_orders, active_orders, now)
 
-        # Birinchi branch nomi — filiali noma'lum haydovchilar uchun default
-        default_branch = list(BRANCHES.keys())[0]
+        # Barcha konfiguratsiya qilingan guruhlarga yuborish (takrorlanmasdan)
+        sent_groups = set()
+        for branch_name, branch_cfg in BRANCHES.items():
+            group_id = branch_cfg.get("group_id")
+            if not group_id or group_id in sent_groups:
+                continue
+            try:
+                await bot.send_message(
+                    chat_id=group_id,
+                    text=report_text,
+                    parse_mode="Markdown"
+                )
+                sent_groups.add(group_id)
+                logger.info(f"✅ Daily report sent to {branch_name} ({group_id}).")
+            except Exception as e:
+                logger.error(f"Failed to send daily report to {branch_name} ({group_id}): {e}")
 
-        # Group by filial
-        filial_stats = {}
+        if not sent_groups:
+            logger.warning("⚠️ No groups configured to receive daily report.")
+
+        # Har bir haydovchiga shaxsiy hisobot
+        medals = ["🥇", "🥈", "🥉"]
+        drv_stats = {}
+        from core.utils import get_seconds_diff
         for o in done_orders:
-            tid    = str(o.get('driver_telegram_id', '') or '')
-            filial = tid_to_filial.get(tid, '') or ''
-            # Agar filial bo'sh yoki BRANCHES da yo'q bo'lsa — default branchga qo'shamiz
-            if filial not in BRANCHES:
-                filial = default_branch
-            if filial not in filial_stats:
-                filial_stats[filial] = {}
-            if tid not in filial_stats[filial]:
-                filial_stats[filial][tid] = {
+            tid = str(o.get('driver_telegram_id', '') or '')
+            if not tid:
+                continue
+            if tid not in drv_stats:
+                drv_stats[tid] = {
                     'name': o.get('driver_name', '-'),
                     'car':  o.get('car_number', '-'),
                     'count': 0, 'total_seconds': 0
                 }
-            filial_stats[filial][tid]['count'] += 1
+            drv_stats[tid]['count'] += 1
             diff = get_seconds_diff(o.get('accepted_at'), o.get('completed_at'))
             if diff and diff > 0:
-                filial_stats[filial][tid]['total_seconds'] += diff
+                drv_stats[tid]['total_seconds'] += diff
 
-        filial_active = {}
-        for o in active_orders:
-            tid    = str(o.get('driver_telegram_id', '') or '')
-            filial = tid_to_filial.get(tid, '') or ''
-            if filial not in BRANCHES:
-                filial = default_branch
-            filial_active.setdefault(filial, []).append(o)
-
-        medals = ["🥇", "🥈", "🥉"]
-
-        for branch_name, branch_cfg in BRANCHES.items():
-            group_id = branch_cfg.get("group_id")
-            if not group_id:
-                continue
-
-            stats   = filial_stats.get(branch_name, {})
-            active  = filial_active.get(branch_name, [])
-            ranking = sorted(stats.items(), key=lambda x: x[1]['count'], reverse=True)
-
-            lines = [
-                f"📊 *Kunlik hisobot — {date_str}*",
-                f"🏢 *Filial: {branch_name}*\n",
-                f"✅ Yakunlangan reyslar: *{sum(s['count'] for s in stats.values())} ta*",
-                f"⏳ Hali yakunlanmagan: *{len(active)} ta*\n",
-            ]
-
-            if ranking:
-                lines.append("🏆 *Haydovchilar reytingi:*")
-                for i, (tid, s) in enumerate(ranking):
-                    count     = s['count']
-                    total_sec = s['total_seconds']
-                    if count > 0 and total_sec > 0:
-                        avg_sec = total_sec // count
-                        avg_h   = avg_sec // 3600
-                        avg_m   = (avg_sec % 3600) // 60
-                        avg_str = f"{avg_h}s {avg_m}dq" if avg_h > 0 else f"{avg_m} daqiqa"
-                    else:
-                        avg_str = "—"
-                    medal = medals[i] if i < 3 else f"{i+1}."
-                    lines.append(f"{medal} *{s['car']}* — {s['name']} — {count} reys | avg: {avg_str}")
-            else:
-                lines.append("📉 Bugun yakunlangan reys yo'q.")
-
-            if active:
-                lines.append("\n⏳ *Yakunlanmagan buyurtmalar:*")
-                for o in active[:10]:
-                    acc    = o.get('accepted_at')
-                    acc_dt = parse_dt(acc) if acc else None
-                    elapsed = int((now - acc_dt).total_seconds() / 60) if acc_dt else 0
-                    lines.append(
-                        f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} "
-                        f"| #{o.get('order_id','-')} | {elapsed} daqiqa"
-                    )
-
-            try:
-                await bot.send_message(
-                    chat_id=group_id,
-                    text="\n".join(lines),
-                    parse_mode="Markdown"
-                )
-                logger.info(f"✅ Daily report sent to {branch_name} ({group_id}).")
-            except Exception as e:
-                logger.error(f"Failed to send daily report to {branch_name}: {e}")
-
-        # Private stats to each driver
-        all_stats = {}
-        for filial_s in filial_stats.values():
-            all_stats.update(filial_s)
-
-        for i, (tid, s) in enumerate(sorted(all_stats.items(), key=lambda x: x[1]['count'], reverse=True)):
+        for i, (tid, s) in enumerate(sorted(drv_stats.items(), key=lambda x: x[1]['count'], reverse=True)):
             count     = s['count']
             total_sec = s['total_seconds']
             avg_str   = f"{(total_sec // count) // 60} daqiqa" if count > 0 and total_sec > 0 else "—"
-            medal = medals[i] if i < 3 else ""
+            medal     = medals[i] if i < 3 else ""
             rank_note = f"\n🎊 Siz bugungi reytingda {i+1}-orinni egalladingiz! {medal}" if i < 3 else ""
             try:
                 await bot.send_message(
