@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import html as _html
 from datetime import datetime, timedelta
 import pytz
 
@@ -18,6 +19,9 @@ router = Router()
 logger = logging.getLogger(__name__)
 tz = pytz.timezone(TIMEZONE)
 
+def _e(text) -> str:
+    """Escape text for HTML parse_mode."""
+    return _html.escape(str(text) if text is not None else "")
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,10 +147,20 @@ def _get_orders_in_range(date_from: str, date_to: str, filter_type: str = None, 
         return []
 
 
+def _elapsed(dt_ref, now) -> str:
+    if not dt_ref:
+        return ""
+    mins = int((now - dt_ref).total_seconds() / 60)
+    if mins < 0:
+        return ""
+    h, m = divmod(mins, 60)
+    return f"{h}s {m}d" if h else f"{m} dq"
+
+
 def _build_report(orders: list, label: str, filter_label: str = "") -> str:
     total = len(orders)
     if total == 0:
-        return f"📊 *Hisobot: {label}*\n\n📭 Bu davrda buyurtmalar topilmadi."
+        return f"📊 <b>Hisobot: {_e(label)}</b>\n\n📭 Bu davrda buyurtmalar topilmadi."
 
     done      = [o for o in orders if o.get("current_status") == "YAKUNLANDI"]
     cancelled = [o for o in orders if o.get("current_status") == "BEKOR_QILINDI"]
@@ -167,69 +181,76 @@ def _build_report(orders: list, label: str, filter_label: str = "") -> str:
     ranking = sorted(drv_stats.values(), key=lambda x: x["count"], reverse=True)
     medals  = ["🥇", "🥈", "🥉"]
 
-    lines = [f"📊 *Hisobot: {label}*"]
+    lines = [f"📊 <b>Hisobot: {_e(label)}</b>"]
     if filter_label:
-        lines.append(f"🔍 Filter: {filter_label}")
+        lines.append(f"🔍 {_e(filter_label)}")
     lines += [
         "",
-        f"📦 Jami buyurtmalar: *{total}*",
-        f"✅ Yakunlangan: *{len(done)}*",
-        f"🚚 Aktiv / Yo'lda: *{len(active)}*",
-        f"❌ Bekor qilingan: *{len(cancelled)}*",
+        f"📦 Jami buyurtmalar: <b>{total}</b>",
+        f"✅ Yakunlangan: <b>{len(done)}</b>",
+        f"🚚 Aktiv / Yo'lda: <b>{len(active)}</b>",
+        f"❌ Bekor qilingan: <b>{len(cancelled)}</b>",
     ]
 
     if ranking:
         lines.append("")
-        lines.append("👥 *Haydovchilar natijalari:*")
+        lines.append("👥 <b>Haydovchilar natijalari:</b>")
         for i, s in enumerate(ranking[:10]):
             avg = int(s["total_sec"] / s["count"] / 60) if s["count"] > 0 else 0
             medal = medals[i] if i < 3 else f"  {i+1}."
             avg_str = f" | o'rtacha {avg} min" if avg > 0 else ""
-            lines.append(f"{medal} *{s['car']}* — {s['name']} — {s['count']} reys{avg_str}")
+            lines.append(f"{medal} <b>{_e(s['car'])}</b> — {_e(s['name'])} — {s['count']} reys{avg_str}")
     else:
         lines.append("\n📭 Yakunlangan reyslar yo'q.")
 
     return "\n".join(lines)
 
 
+STAGE_LABELS = {
+    'NEW':            '🆕 Yangi (qabul kutilmoqda)',
+    'SENT':           '📤 Yuborilgan (haydovchi qabul qilmagan)',
+    'QABUL_QILINDI':  '📥 Qabul qilindi',
+    'BLOCK_MENU':     '🏗 Blok tanlayapti',
+    'TRANSIT':        '🚚 Transit savoli',
+    'YOLDA':          '🛣 Yo\'lga chiqdi',
+    'LOADED_PHOTO':   '📸 Yuk rasmi kutilmoqda',
+    'ACT_PHOTO':      '🧾 Akt rasmi kutilmoqda',
+    'DELIVERED_LOC':  '📍 Lokatsiya kutilmoqda',
+    'WAITING_FINISH': '⏳ Yakunlash kutilmoqda',
+}
+
 def _build_active_text(orders: list) -> str:
     if not orders:
-        return "✅ Hozir aktiv buyurtmalar yo'q."
+        return "✅ Hozir yakunlanmagan buyurtmalar yo'q."
 
     now = datetime.now(tz)
-    status_labels = {
-        'NEW': '🆕 Yangi', 'SENT': '📤 Yuborilgan', 'QABUL_QILINDI': '📥 Qabul',
-        'BLOCK_MENU': '🏗 Blok', 'TRANSIT': '🚚 Transit', 'YOLDA': '🛣 Yo\'lda',
-        'LOADED_PHOTO': '📸 Rasm', 'ACT_PHOTO': '🧾 Akt', 'DELIVERED_LOC': '📍 Lokatsiya',
-        'WAITING_FINISH': '⏳ Yakunlash',
-    }
+    lines = [f"📋 <b>Yakunlanmagan buyurtmalar: {len(orders)} ta</b>\n"]
 
-    lines = [f"📋 *Aktiv buyurtmalar: {len(orders)} ta*\n"]
-    for o in orders[:25]:
+    for o in orders[:30]:
         status   = o.get('current_status', '-')
-        st_label = status_labels.get(status, status)
+        st_label = STAGE_LABELS.get(status, f"❓ {status}")
         created  = parse_dt(o.get("created_at"))
         acc      = parse_dt(o.get("accepted_at"))
 
-        time_str = ""
+        # Time since accepted (if accepted), otherwise since created
         if acc:
-            mins = int((now - acc).total_seconds() / 60)
-            h, m = divmod(mins, 60)
-            time_str = f" ({h}s {m}d)" if h else f" ({m} dq)"
+            elapsed = _elapsed(acc, now)
+            time_str = f" | ⏱ {elapsed}" if elapsed else ""
         elif created:
-            mins = int((now - created).total_seconds() / 60)
-            h, m = divmod(mins, 60)
-            time_str = f" (kutmoqda {h}s {m}d)" if h else f" (kutmoqda {m} dq)"
+            elapsed = _elapsed(created, now)
+            time_str = f" | ⏳ kutmoqda {elapsed}" if elapsed else ""
+        else:
+            time_str = ""
 
         lines.append(
-            f"🔹 *#{o['order_id']}* | 🚗 {o.get('car_number','-')} | {o.get('driver_name','-')}\n"
-            f"   📍 {o.get('address','-')}\n"
+            f"🔹 <b>#{_e(o['order_id'])}</b> | 🚗 {_e(o.get('car_number','-'))} | {_e(o.get('driver_name','-'))}\n"
+            f"   📍 {_e(o.get('address','-'))}\n"
             f"   {st_label}{time_str}"
         )
 
-    if len(orders) > 25:
-        lines.append(f"\n...va yana {len(orders)-25} ta buyurtma")
-    lines.append("\n💡 Bekor qilish uchun: *❌ Buyurtmani bekor qilish* bosing")
+    if len(orders) > 30:
+        lines.append(f"\n...va yana {len(orders)-30} ta buyurtma")
+    lines.append("\n💡 Bekor/yakunlash uchun: <b>❌ Buyurtmani bekor qilish</b> bosing")
     return "\n".join(lines)
 
 
@@ -243,9 +264,9 @@ async def admin_panel(message: Message, state: FSMContext):
         return
     await state.clear()
     await message.answer(
-        "🛠 *Admin panel*\nBo'limni tanlang:",
+        "🛠 <b>Admin panel</b>\nBo'limni tanlang:",
         reply_markup=get_admin_panel_kb(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -257,11 +278,11 @@ async def back_to_admin(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
     await callback.answer()
     await state.clear()
-    text = "🛠 *Admin panel*\nBo'limni tanlang:"
+    text = "🛠 <b>Admin panel</b>\nBo'limni tanlang:"
     try:
-        await callback.message.edit_text(text, reply_markup=get_admin_panel_kb(), parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=get_admin_panel_kb(), parse_mode="HTML")
     except Exception:
-        await callback.message.answer(text, reply_markup=get_admin_panel_kb(), parse_mode="Markdown")
+        await callback.message.answer(text, reply_markup=get_admin_panel_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data == "adm_close")
 async def close_admin(callback: CallbackQuery, state: FSMContext):
@@ -286,9 +307,9 @@ async def show_active(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Orqaga",    callback_data="adm_back")],
         ])
         try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         logger.error(f"adm_active error: {e}", exc_info=True)
         await callback.message.answer(f"⚠️ Xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
@@ -306,13 +327,13 @@ async def report_menu(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             "📊 *Hisobotni olish*\nDavrni tanlang:",
             reply_markup=_report_menu_kb(),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     except Exception:
         await callback.message.answer(
             "📊 *Hisobotni olish*\nDavrni tanlang:",
             reply_markup=_report_menu_kb(),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 
@@ -329,9 +350,9 @@ async def _send_report(callback: CallbackQuery, kind: str, label: str):
             [InlineKeyboardButton(text="🔙 Hisobot menyusi", callback_data="adm_report_menu")],
         ])
         try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         logger.error(f"report ({kind}) error: {e}", exc_info=True)
         await callback.message.answer(f"⚠️ Hisobot xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
@@ -362,17 +383,17 @@ async def ask_manual_date(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             "🗓 *Sana kiriting:*\n\n"
             "Formatlar:\n"
-            "• `bugun` yoki `kecha`\n"
+            "• <code>bugun</code> yoki <code>kecha</code>\n"
             "• `7 kun` yoki `30 kun`\n"
             "• `15.05.2026`\n"
             "• `01.05.2026 - 15.05.2026` (oraliq)",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
     except Exception:
         await callback.message.answer(
             "🗓 Sana kiriting (masalan: `15.05.2026` yoki `bugun`):",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
 
@@ -385,7 +406,7 @@ async def process_manual_date(message: Message, state: FSMContext):
         await message.answer(
             "❌ Sana noto'g'ri kiritildi.\n"
             "Masalan: `15.05.2026` yoki `01.05.2026 - 15.05.2026` yoki `bugun`",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -401,7 +422,7 @@ async def process_manual_date(message: Message, state: FSMContext):
         d2 = datetime.fromisoformat(dt).strftime("%d.%m.%Y")
         date_label = f"{d1} — {d2}" if d1 != d2 else d1
         text = _build_report(orders, date_label, filter_label)
-        await message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
+        await message.answer(text, parse_mode="HTML", reply_markup=_back_kb())
     except Exception as e:
         logger.error(f"manual date report error: {e}", exc_info=True)
         await message.answer(f"⚠️ Hisobot xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
@@ -459,12 +480,12 @@ async def select_car(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminProcess.waiting_for_manual_date)
     try:
         await callback.message.edit_text(
-            f"🚗 *{car}* mashinasi uchun sana kiriting:\n\n"
-            "• `bugun` yoki `kecha`\n"
+            f"🚗 <b>{_e(car)}</b> mashinasi uchun sana kiriting:\n\n"
+            "• <code>bugun</code> yoki <code>kecha</code>\n"
             "• `7 kun` yoki `30 kun`\n"
             "• `15.05.2026`\n"
             "• `01.05.2026 - 15.05.2026`",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
     except Exception:
@@ -508,11 +529,11 @@ async def select_driver(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             f"👤 Haydovchi (ID: `{tid}`) uchun sana kiriting:\n\n"
-            "• `bugun` yoki `kecha`\n"
+            "• <code>bugun</code> yoki <code>kecha</code>\n"
             "• `7 kun` yoki `30 kun`\n"
             "• `15.05.2026`\n"
             "• `01.05.2026 - 15.05.2026`",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
     except Exception:
@@ -562,28 +583,28 @@ async def show_rating(callback: CallbackQuery):
         month_rank = build_ranking(month_orders)
         medals = ["🥇", "🥈", "🥉"]
 
-        lines = [f"🏆 *Umumiy reyting*\n"]
+        lines = ["🏆 <b>Umumiy reyting</b>\n"]
 
         # Today
         date_str = now.strftime("%d.%m.%Y")
-        lines.append(f"📅 *Bugun ({date_str}):*")
+        lines.append(f"📅 <b>Bugun ({date_str}):</b>")
         if today_rank:
             for i, s in enumerate(today_rank[:5]):
                 avg = int(s["total_sec"] / s["count"] / 60) if s["count"] > 0 else 0
                 medal = medals[i] if i < 3 else f"  {i+1}."
                 avg_str = f" | avg {avg} min" if avg > 0 else ""
-                lines.append(f"{medal} *{s['car']}* — {s['name']} — {s['count']} reys{avg_str}")
+                lines.append(f"{medal} <b>{_e(s['car'])}</b> — {_e(s['name'])} — {s['count']} reys{avg_str}")
         else:
             lines.append("  📭 Bugun yakunlangan reys yo'q")
 
         # This month
-        lines.append(f"\n📆 *{now.strftime('%B %Y')} oyi:*")
+        lines.append(f"\n📆 <b>{now.strftime('%B %Y')} oyi:</b>")
         if month_rank:
             for i, s in enumerate(month_rank[:5]):
                 avg = int(s["total_sec"] / s["count"] / 60) if s["count"] > 0 else 0
                 medal = medals[i] if i < 3 else f"  {i+1}."
                 avg_str = f" | avg {avg} min" if avg > 0 else ""
-                lines.append(f"{medal} *{s['car']}* — {s['name']} — {s['count']} reys{avg_str}")
+                lines.append(f"{medal} <b>{_e(s['car'])}</b> — {_e(s['name'])} — {s['count']} reys{avg_str}")
         else:
             lines.append("  📭 Bu oyda yakunlangan reys yo'q")
 
@@ -593,9 +614,9 @@ async def show_rating(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Orqaga",    callback_data="adm_back")],
         ])
         try:
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
-            await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         logger.error(f"adm_rating error: {e}", exc_info=True)
         await callback.message.answer(f"⚠️ Reyting xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
@@ -615,7 +636,7 @@ async def start_cancel_order(callback: CallbackQuery, state: FSMContext):
             "🔎 *Buyurtma ID kiriting:*\n\n"
             "Masalan: `S32676` yoki `P14095`\n\n"
             "Aktiv buyurtmalar ID larini ko'rish uchun *📋 Aktiv buyurtmalar* ga kiring.",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
     except Exception:
@@ -637,9 +658,9 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
 
     if not order:
         await message.answer(
-            f"❌ *#{order_id} buyurtmasi topilmadi.*\n\n"
-            f"ID to'g'riligini tekshiring yoki *📋 Aktiv buyurtmalar* dan ID ni ko'ring.",
-            parse_mode="Markdown",
+            f"❌ <b>#{_e(order_id)} buyurtmasi topilmadi.</b>\n\n"
+            f"ID to'g'riligini tekshiring yoki <b>📋 Aktiv buyurtmalar</b> dan ID ni ko'ring.",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📋 Aktiv buyurtmalar", callback_data="adm_active")],
                 [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")],
@@ -650,9 +671,9 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
     status = order.get('current_status', '-')
     if status == 'BEKOR_QILINDI':
         await message.answer(
-            f"⚠️ *#{order_id} allaqachon bekor qilingan.*\n"
+            f"⚠️ <b>#{_e(order_id)} allaqachon bekor qilingan.</b>\n"
             f"Boshqa buyurtma ID kiriting yoki orqaga qayting.",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=_back_kb()
         )
         await state.clear()
@@ -673,15 +694,15 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
     acc_str     = acc.strftime('%d.%m.%Y %H:%M') if acc else 'Qabul qilinmagan'
 
     text = (
-        f"📋 *Buyurtma #{order_id}*\n\n"
-        f"👤 Haydovchi: *{order.get('driver_name', '—')}*\n"
-        f"🚗 Mashina: *{order.get('car_number', '—')}*\n"
-        f"📍 Manzil: {order.get('address', '—')}\n"
-        f"📦 Yuk: {order.get('cargo', '—')}\n"
-        f"📊 Holat: {st_label}\n"
+        f"📋 <b>Buyurtma #{_e(order_id)}</b>\n\n"
+        f"👤 Haydovchi: <b>{_e(order.get('driver_name','—'))}</b>\n"
+        f"🚗 Mashina: <b>{_e(order.get('car_number','—'))}</b>\n"
+        f"📍 Manzil: {_e(order.get('address','—'))}\n"
+        f"📦 Yuk: {_e(order.get('cargo','—'))}\n"
+        f"📊 Holat: {_e(st_label)}\n"
         f"📤 Yaratilgan: {created_str}\n"
         f"✅ Qabul: {acc_str}\n\n"
-        f"*Quyidagi amalni tanlang:*"
+        f"<b>Quyidagi amalni tanlang:</b>"
     )
 
     confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -693,7 +714,7 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
     ])
 
     await state.update_data(cancel_order_id=order_id)
-    await message.answer(text, parse_mode="Markdown", reply_markup=confirm_kb)
+    await message.answer(text, parse_mode="HTML", reply_markup=confirm_kb)
 
 
 async def _notify_cancel_finish(bot: Bot, order: dict, order_id: str, action: str):
@@ -714,15 +735,15 @@ async def _notify_cancel_finish(bot: Bot, order: dict, order_id: str, action: st
     results = []
 
     if action == 'cancel':
-        drv_text   = f"❌ *Buyurtma bekor qilindi!*\n\n🆔 #{order_id} buyurtmangiz admin tomonidan bekor qilindi.\n📍 {address}\n\nYangi buyurtmalar uchun kuting."
-        group_text = f"❌ *Buyurtma bekor qilindi!*\n\n🆔 #{order_id}\n👤 {driver_name} | 🚗 {car_number}\n📍 {address}\n\n📊 Admin tomonidan bekor qilindi."
+        drv_text   = f"❌ <b>Buyurtma bekor qilindi!</b>\n\n🆔 #{_e(order_id)} buyurtmangiz admin tomonidan bekor qilindi.\n📍 {_e(address)}\n\nYangi buyurtmalar uchun kuting."
+        group_text = f"❌ <b>Buyurtma bekor qilindi!</b>\n\n🆔 #{_e(order_id)}\n👤 {_e(driver_name)} | 🚗 {_e(car_number)}\n📍 {_e(address)}\n\n📊 Admin tomonidan bekor qilindi."
     else:
-        drv_text   = f"✅ *Buyurtma yakunlandi!*\n\n🆔 #{order_id} buyurtmangiz admin tomonidan yakunlandi.\n📍 {address}"
-        group_text = f"✅ *Buyurtma yakunlandi!*\n\n🆔 #{order_id}\n👤 {driver_name} | 🚗 {car_number}\n📍 {address}\n\n📊 Admin tomonidan yakunlandi."
+        drv_text   = f"✅ <b>Buyurtma yakunlandi!</b>\n\n🆔 #{_e(order_id)} buyurtmangiz admin tomonidan yakunlandi.\n📍 {_e(address)}"
+        group_text = f"✅ <b>Buyurtma yakunlandi!</b>\n\n🆔 #{_e(order_id)}\n👤 {_e(driver_name)} | 🚗 {_e(car_number)}\n📍 {_e(address)}\n\n📊 Admin tomonidan yakunlandi."
 
     if driver_tid:
         try:
-            await bot.send_message(chat_id=driver_tid, text=drv_text, parse_mode="Markdown")
+            await bot.send_message(chat_id=driver_tid, text=drv_text, parse_mode="HTML")
             results.append("✅ Haydovchiga xabar yuborildi")
         except Exception as e:
             logger.warning(f"notify driver {driver_tid}: {e}")
@@ -732,7 +753,7 @@ async def _notify_cancel_finish(bot: Bot, order: dict, order_id: str, action: st
 
     if group_id and str(group_id) not in ("0", "", "None"):
         try:
-            await bot.send_message(chat_id=group_id, text=group_text, parse_mode="Markdown")
+            await bot.send_message(chat_id=group_id, text=group_text, parse_mode="HTML")
             results.append("✅ Guruhga xabar yuborildi")
         except Exception as e:
             logger.warning(f"notify group {group_id}: {e}")
@@ -793,8 +814,8 @@ async def confirm_cancel_order(callback: CallbackQuery, state: FSMContext, bot: 
     ])
     try:
         await callback.message.edit_text(
-            f"✅ *#{order_id} bekor qilindi!*\n\n{results_text}",
-            parse_mode="Markdown", reply_markup=done_kb
+            f"✅ <b>#{_e(order_id)} bekor qilindi!</b>\n\n{results_text}",
+            parse_mode="HTML", reply_markup=done_kb
         )
     except Exception:
         await callback.message.answer(
@@ -850,8 +871,8 @@ async def confirm_finish_order(callback: CallbackQuery, state: FSMContext, bot: 
     ])
     try:
         await callback.message.edit_text(
-            f"✅ *#{order_id} yakunlandi!*\n\n{results_text}",
-            parse_mode="Markdown", reply_markup=done_kb
+            f"✅ <b>#{_e(order_id)} yakunlandi!</b>\n\n{results_text}",
+            parse_mode="HTML", reply_markup=done_kb
         )
     except Exception:
         await callback.message.answer(
