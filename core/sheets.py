@@ -275,6 +275,28 @@ def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
         logger.error(f"write_driver_order_count_to_orders_sheet error: {e}")
 
 
+# ── write_order_result_note ──────────────────────────────────────────────────
+
+def write_order_result_note(row_index: int, note: str, sheet_name: str = None):
+    """
+    Writes a human-readable result/reason note to column H of the orders sheet.
+    Col H is reserved for bot feedback (why not sent, duplicate, etc).
+    """
+    client = get_gspread_client()
+    if not client:
+        return
+    target_sheet = sheet_name or ORDERS_SHEET_NAME
+    try:
+        def _do():
+            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            worksheet = sh.worksheet(target_sheet)
+            worksheet.update_cell(row_index, 8, note)
+            logger.info(f"[{target_sheet}] Row {row_index} col H → '{note}'")
+        _retry(_do)
+    except Exception as e:
+        logger.error(f"write_order_result_note error (sheet={target_sheet}): {e}")
+
+
 # ── update_driver_status_sheet ────────────────────────────────────────────────
 
 def update_driver_status_sheet(car_number, status, order_id=""):

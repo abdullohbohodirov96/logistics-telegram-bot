@@ -7,7 +7,7 @@ from aiogram import Bot
 from core.sheets import (
     get_new_orders, update_order_status, get_drivers,
     update_driver_status_sheet, remove_order_from_driver_sheet,
-    write_driver_order_count_to_orders_sheet
+    write_driver_order_count_to_orders_sheet, write_order_result_note
 )
 from core.db import create_order, get_order, update_order
 import core.keyboards as kb
@@ -105,11 +105,17 @@ async def check_sheets_job(bot: Bot):
                     try:
                         logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
 
-                        # Check DB — if order already SENT or later, skip
+                        # Check DB — if order already SENT or later, mark sheet and skip
                         db_order = await asyncio.to_thread(get_order, order_id)
                         if db_order and db_order.get('current_status') not in ('NEW', None, ''):
                             PROCESSED_ORDERS[order_id] = True
-                            logger.info(f"⏭ #{order_id} already in DB with status={db_order.get('current_status')}. Skipping.")
+                            existing_status = db_order.get('current_status', '?')
+                            logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"⚠️ Bu buyurtma allaqachon bazada bor (holat: {existing_status})", sheet_name
+                            )
                             continue
 
                         # Create in DB if missing
@@ -137,14 +143,22 @@ async def check_sheets_job(bot: Bot):
 
                         if not driver:
                             logger.error(f"❌ Driver not found for car '{car_number}' (#{order_id}).")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_NOT_FOUND', sheet_name)
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_TOPILMADI', sheet_name)
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"❌ '{car_number}' mashina raqami haydovchilar jadvalida topilmadi", sheet_name
+                            )
                             PROCESSED_ORDERS[order_id] = True
                             continue
 
                         telegram_id = driver['telegram_id']
                         if not telegram_id:
                             logger.error(f"❌ No Telegram ID for driver '{driver.get('driver_name')}'.")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_NO_TELEGRAM_ID', sheet_name)
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_ID_YOQ', sheet_name)
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"❌ {driver.get('driver_name', car_number)} uchun Telegram ID kiritilmagan", sheet_name
+                            )
                             PROCESSED_ORDERS[order_id] = True
                             continue
 
@@ -152,7 +166,11 @@ async def check_sheets_job(bot: Bot):
                         active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
                         if active_count >= 3:
                             logger.warning(f"⚠️ [{car_number}] has {active_count} active orders (max 3). Skipping #{order_id}.")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_DRIVER_BUSY_3', sheet_name)
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_BAND', sheet_name)
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"⛔ {driver.get('driver_name', car_number)} da allaqachon {active_count} ta aktiv buyurtma bor (max 3)", sheet_name
+                            )
                             PROCESSED_ORDERS[order_id] = True
                             continue
 
@@ -163,6 +181,11 @@ async def check_sheets_job(bot: Bot):
                             logger.warning(
                                 f"⚠️ [{car_number}] has {sent_count} unaccepted SENT order(s). "
                                 f"Holding #{order_id} until they accept pending orders."
+                            )
+                            # Write reason to sheet so admin sees why — status stays SEND for retry
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"⏳ Kutilmoqda — {driver.get('driver_name', car_number)} avvalgi buyurtmani hali qabul qilmagan", sheet_name
                             )
                             # Do NOT add to PROCESSED_ORDERS — retry next cycle
                             continue
@@ -191,7 +214,11 @@ async def check_sheets_job(bot: Bot):
                             logger.info(f"✉️ #{order_id} sent to {driver.get('driver_name')} (TID: {telegram_id}).")
                         except Exception as tg_err:
                             logger.error(f"❌ Failed to send to {telegram_id}: {tg_err}")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'ERROR_TG_SEND_FAILED', sheet_name)
+                            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_XATOSI', sheet_name)
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err})", sheet_name
+                            )
                             PROCESSED_ORDERS[order_id] = True
                             continue
 
@@ -205,9 +232,10 @@ async def check_sheets_job(bot: Bot):
                         })
                         _ORDER_BRANCH[order_id] = branch_name
 
-                        # Update sheets
+                        # Update sheets — clear any previous "waiting" note
                         await asyncio.sleep(1)
                         await asyncio.to_thread(update_order_status, order['row_index'], 'SENT', sheet_name)
+                        await asyncio.to_thread(write_order_result_note, order['row_index'], '', sheet_name)
 
                         await asyncio.sleep(1)
                         await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
