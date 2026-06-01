@@ -131,15 +131,32 @@ async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    await callback.answer()
     order_id = callback.data.split("_")[1]
 
-    # Multi-order: haydovchi 3 tagacha order qabul qilishi mumkin
-    # Agar state boshqa order uchun bo'lsa — yangi state open qilamiz
+    # Check order is still valid (not cancelled)
+    order_check = await asyncio.to_thread(get_order, order_id)
+    if not order_check:
+        await callback.answer("❌ Buyurtma topilmadi!", show_alert=True)
+        return
+    if order_check.get('current_status') == 'BEKOR_QILINDI':
+        await callback.answer("❌ Bu buyurtma admin tomonidan bekor qilingan!", show_alert=True)
+        try:
+            await callback.message.edit_text(
+                f"❌ #{order_id} buyurtmasi admin tomonidan bekor qilingan.\n"
+                f"Yangi buyurtmalar uchun kutib turing."
+            )
+        except Exception:
+            pass
+        return
+    if order_check.get('current_status') not in ('NEW', 'SENT', None, ''):
+        await callback.answer("ℹ️ Bu buyurtma allaqachon qabul qilingan.", show_alert=True)
+        return
+
+    await callback.answer()
+
     data = await state.get_data()
     existing_order_id = data.get('order_id')
     if existing_order_id and existing_order_id != order_id:
-        # Haydovchi boshqa order ustida ishlayapti — uni saqlab, yangi orderga o'tamiz
         logger.info(f"Driver switching from order {existing_order_id} to new order {order_id}")
 
     await state.update_data(order_id=order_id, stage_history=[])
@@ -230,10 +247,16 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
         data = await state.get_data()
         stage_history = data.get('stage_history') or []
 
+        # Check order not cancelled
+        _order_check = await asyncio.to_thread(get_order, order_id)
+        if not _order_check or _order_check.get('current_status') == 'BEKOR_QILINDI':
+            await state.clear()
+            await callback.message.answer("❌ Bu buyurtma bekor qilingan. /start bosing.")
+            return
+
         # Calculate duration
         if not stage_history:
-            order = await asyncio.to_thread(get_order, order_id)
-            start_time = parse_dt(order.get('accepted_at')) if order else now
+            start_time = parse_dt(_order_check.get('accepted_at')) if _order_check else now
             if not start_time: start_time = now
         else:
             start_time = data.get('last_block_time') or now
@@ -499,6 +522,10 @@ async def handle_loaded_photo(message: Message, state: FSMContext, bot: Bot):
     if not order:
         await message.answer("❌ Buyurtma topilmadi. Iltimos, qaytadan urinib ko'ring.")
         return
+    if order.get('current_status') == 'BEKOR_QILINDI':
+        await state.clear()
+        await message.answer("❌ Bu buyurtma admin tomonidan bekor qilindi. /start bosing.")
+        return
     await asyncio.to_thread(update_order, order_id, {'loaded_photo_file_id': file_id, 'loaded_photo_at': now})
     await state.set_state(DeliveryStates.ON_WAY)
     addr = order.get('address', '-')
@@ -546,6 +573,10 @@ async def handle_act_photo(message: Message, state: FSMContext, bot: Bot):
     order = await asyncio.to_thread(get_order, order_id)
     if not order:
         await message.answer("❌ Buyurtma topilmadi.")
+        return
+    if order.get('current_status') == 'BEKOR_QILINDI':
+        await state.clear()
+        await message.answer("❌ Bu buyurtma admin tomonidan bekor qilindi. /start bosing.")
         return
     await asyncio.to_thread(update_order, order_id, {'act_photo_file_id': file_id, 'act_photo_at': now})
     await state.set_state(DeliveryStates.DELIVERED_LOC)
@@ -607,6 +638,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         if order.get('current_status') == 'YAKUNLANDI':
             logger.info(f"[FINISH] Order {order_id} already finished.")
             await callback.message.answer("✅ Bu zakaz allaqachon yakunlangan.")
+            await state.clear()
+            return
+
+        if order.get('current_status') == 'BEKOR_QILINDI':
+            await callback.message.answer("❌ Bu buyurtma admin tomonidan bekor qilindi.")
             await state.clear()
             return
 
@@ -770,32 +806,69 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
 @router.message(DeliveryStates())
 async def handle_wrong_input(message: Message, state: FSMContext):
     curr = await state.get_state()
+    data = await state.get_data()
+    order_id = data.get('order_id', '?')
     try:
         if curr == DeliveryStates.ON_WAY:
             await message.answer(
-                "⚠️ Iltimos, avval yuqoridagi **🚚 Yo'lga chiqdim** tugmasini bosing!\n"
-                "⚠️ Илтимос, аввал юқоридаги **🚚 Йo'лга чиқдим** тугмасини bosing!"
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *yo'lga chiqish* tasdiqlash kerak.\n\n"
+                f"⬆️ Yuqoridagi *🚚 Yo'lga chiqdim* tugmasini bosing.\n"
+                f"Boshqa harakat qilib bo'lmaydi!",
+                parse_mode="Markdown"
             )
         elif curr == DeliveryStates.LOADED_PHOTO:
             await message.answer(
-                "📸 Iltimos, yuk rasmini yuboring.\n"
-                "📸 Илтимос, юк расмини юборинг."
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *yuk rasmi* kerak.\n\n"
+                f"📸 Iltimos, faqat *yuk ortilgan rasmni* yuboring.\n"
+                f"Matn, sticker yoki boshqa narsalar qabul qilinmaydi!",
+                parse_mode="Markdown"
             )
         elif curr == DeliveryStates.ACT_PHOTO:
             await message.answer(
-                "📄 Iltimos, akt rasmini yuboring.\n"
-                "📄 Илтимос, акт расмини юборинг."
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *akt rasmi* kerak.\n\n"
+                f"📄 Iltimos, faqat *qo'l qo'yilgan akt rasmini* yuboring.\n"
+                f"Matn, sticker yoki boshqa narsalar qabul qilinmaydi!",
+                parse_mode="Markdown"
             )
         elif curr == DeliveryStates.DELIVERED_LOC:
             await message.answer(
-                "📍 Iltimos, lokatsiya yuboring.\n"
-                "📍 Илтимос, локация юборинг.",
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *lokatsiya* kerak.\n\n"
+                f"📍 Iltimos, faqat *joylashuvingizni* yuboring.\n"
+                f"Quyidagi tugmani bosing:",
+                parse_mode="Markdown",
                 reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish")
+            )
+        elif curr == DeliveryStates.WAITING_FINISH:
+            await message.answer(
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasini yakunlash uchun\n"
+                f"⬆️ Yuqoridagi *✅ Buyurtmani yakunlash* tugmasini bosing!",
+                parse_mode="Markdown"
+            )
+        elif curr in (DeliveryStates.BLOCK_MENU, DeliveryStates.BLOCK_SUBMENU):
+            await message.answer(
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *bloklarni tanlash* kerak.\n\n"
+                f"⬆️ Yuqoridagi tugmalardan A/B/C/D bloklarni tanlang!",
+                parse_mode="Markdown"
+            )
+        elif curr in (DeliveryStates.TRANSIT, DeliveryStates.TRANSIT_EXTRA):
+            await message.answer(
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi bo'yicha hozir *transit* savoliga javob bering.\n\n"
+                f"⬆️ Yuqoridagi tugmalardan birini bosing!",
+                parse_mode="Markdown"
             )
         elif curr is not None:
             await message.answer(
-                "ℹ️ Iltimos, pastdagi tugmalardan foydalaning.\n"
-                "ℹ️ Илтимос, пастдаги тугмалардан фойдаланинг."
+                f"🚫 *To'xta!*\n\n"
+                f"📦 #{order_id} buyurtmasi hali tugallanmagan.\n"
+                f"Iltimos, yuqoridagi tugmalardan foydalaning va buyurtmani yakunlang.",
+                parse_mode="Markdown"
             )
     except Exception as e:
         logger.error(f"handle_wrong_input error: {e}")

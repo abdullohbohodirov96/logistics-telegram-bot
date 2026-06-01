@@ -113,6 +113,17 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
 
     status = order.get("current_status", "")
 
+    if status == "BEKOR_QILINDI":
+        await callback.message.answer(
+            f"❌ #{order_id} buyurtmasi admin tomonidan bekor qilingan.\n"
+            f"Boshqa aktiv buyurtmalaringiz uchun /start bosing."
+        )
+        return
+
+    if status == "YAKUNLANDI":
+        await callback.message.answer(f"✅ #{order_id} buyurtmasi allaqachon yakunlangan.")
+        return
+
     # ── Step 3: Restore stage_history from DB ──
     stage_history = order.get("stage_history") or []
     if isinstance(stage_history, str):

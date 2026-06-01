@@ -378,6 +378,44 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
         return False
 
 
+# ── cancel_order_in_sheets ───────────────────────────────────────────────────
+
+def cancel_order_in_sheets(order_id: str) -> bool:
+    """Sets order status to BEKOR_QILINDI in all branch order sheets."""
+    client = get_gspread_client()
+    if not client:
+        return False
+    try:
+        from core.config import BRANCHES
+
+        def _do():
+            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            seen = set()
+            for b in BRANCHES.values():
+                s = b.get('orders_sheet', '')
+                if not s or s in seen:
+                    continue
+                seen.add(s)
+                try:
+                    ws = sh.worksheet(s)
+                    cell = ws.find(str(order_id).strip(), in_column=1)
+                    if cell:
+                        headers = ws.row_values(1)
+                        status_idx = fuzzy_match_header(headers, ['status', 'holat'])
+                        if status_idx != -1:
+                            ws.update_cell(cell.row, status_idx + 1, 'BEKOR_QILINDI')
+                            logger.info(f"[SHEETS] Order {order_id} → BEKOR_QILINDI in '{s}'")
+                        return True
+                except Exception as e:
+                    logger.warning(f"cancel_order_in_sheets: sheet={s} err: {e}")
+            return False
+
+        return _retry(_do) or False
+    except Exception as e:
+        logger.error(f"cancel_order_in_sheets error: {e}")
+        return False
+
+
 # ── Helper read functions ─────────────────────────────────────────────────────
 
 def get_driver_by_tid(tid):

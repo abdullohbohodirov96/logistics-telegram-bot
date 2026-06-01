@@ -55,10 +55,10 @@ async def main():
                 max_instances=1
             )
 
-            # 30 daqiqalik eslatmalar
+            # Eslatmalar: har 15 daqiqada tekshirish (1 soatlik chegalni to'g'ri ushlab qolish)
             scheduler.add_job(
                 send_driver_reminders, 'interval',
-                minutes=30,
+                minutes=15,
                 args=[bot],
                 max_instances=1
             )

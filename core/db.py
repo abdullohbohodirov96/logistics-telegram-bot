@@ -107,7 +107,10 @@ def get_unique_drivers():
 def get_active_orders():
     try:
         if not supabase: return []
-        response = supabase.table('orders').select('*').neq('current_status', 'YAKUNLANDI').order('created_at', desc=True).limit(50).execute()
+        response = (supabase.table('orders').select('*')
+            .neq('current_status', 'YAKUNLANDI')
+            .neq('current_status', 'BEKOR_QILINDI')
+            .order('created_at', desc=True).limit(50).execute())
         return response.data
     except Exception as e:
         logger.error(f"Error getting active orders: {e}")
@@ -122,6 +125,7 @@ def get_active_orders_by_driver(driver_tid):
             .select('*')
             .eq('driver_telegram_id', str(driver_tid))
             .neq('current_status', 'YAKUNLANDI')
+            .neq('current_status', 'BEKOR_QILINDI')
             .order('created_at', desc=True)
             .limit(10)
             .execute()
@@ -207,11 +211,49 @@ def get_orders_by_date_range(start_iso: str, end_iso: str):
 def get_active_orders_count(driver_tid: int) -> int:
     try:
         if not supabase: return 0
-        response = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', driver_tid).neq('current_status', 'YAKUNLANDI').execute()
+        response = (supabase.table('orders').select('id', count='exact')
+            .eq('driver_telegram_id', driver_tid)
+            .neq('current_status', 'YAKUNLANDI')
+            .neq('current_status', 'BEKOR_QILINDI')
+            .execute())
         return response.count if response.count is not None else 0
     except Exception as e:
         logger.error(f"Error getting active orders count: {e}")
         return 0
+
+def get_orders_by_status(status: str) -> list:
+    """Returns all orders with a specific current_status."""
+    try:
+        if not supabase: return []
+        response = supabase.table('orders').select('*').eq('current_status', status).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error get_orders_by_status({status}): {e}")
+        return []
+
+def get_driver_sent_orders_count(driver_tid) -> int:
+    """Returns count of SENT (dispatched but not accepted) orders for a driver."""
+    try:
+        if not supabase: return 0
+        response = (supabase.table('orders').select('id', count='exact')
+            .eq('driver_telegram_id', str(driver_tid))
+            .eq('current_status', 'SENT')
+            .execute())
+        return response.count if response.count is not None else 0
+    except Exception as e:
+        logger.error(f"Error get_driver_sent_orders_count: {e}")
+        return 0
+
+def cancel_order_in_db(order_id: str) -> bool:
+    """Soft-cancel an order: set status to BEKOR_QILINDI."""
+    try:
+        if not supabase: return False
+        supabase.table('orders').update({'current_status': 'BEKOR_QILINDI'}).eq('order_id', order_id).execute()
+        logger.info(f"Order {order_id} → BEKOR_QILINDI in DB")
+        return True
+    except Exception as e:
+        logger.error(f"Error cancelling order {order_id}: {e}")
+        return False
 
 def get_today_completed_count(driver_tid: int) -> int:
     try:
@@ -257,8 +299,12 @@ def get_drivers_admin_stats():
         
         stats = []
         for tid, info in drivers.items():
-            # Active count (not finished)
-            active_res = supabase.table('orders').select('id', count='exact').eq('driver_telegram_id', tid).neq('current_status', 'YAKUNLANDI').execute()
+            # Active count (not finished, not cancelled)
+            active_res = (supabase.table('orders').select('id', count='exact')
+                .eq('driver_telegram_id', tid)
+                .neq('current_status', 'YAKUNLANDI')
+                .neq('current_status', 'BEKOR_QILINDI')
+                .execute())
             active = active_res.count if active_res.count is not None else 0
             
             # Today completed

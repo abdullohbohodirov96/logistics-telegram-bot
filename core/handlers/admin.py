@@ -4,14 +4,14 @@ import asyncio
 from datetime import datetime, timedelta
 import pytz
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from core.config import ADMIN_IDS, TIMEZONE
-from core.db import get_history, get_active_orders, get_orders_by_date_range
+from core.db import get_history, get_active_orders, get_orders_by_date_range, get_order
 from core.states import AdminProcess
 from core.handlers.history import format_delivery_short
 from core.utils import format_duration_detailed, get_seconds_diff, parse_dt
@@ -33,17 +33,18 @@ def _back_kb():
 
 def get_admin_panel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Aktiv buyurtmalar",     callback_data="adm_active")],
-        [InlineKeyboardButton(text="📊 Bugungi hisobot",       callback_data="adm_today")],
-        [InlineKeyboardButton(text="📊 Kechagi hisobot",       callback_data="adm_yesterday")],
-        [InlineKeyboardButton(text="📊 Oxirgi 7 kun",          callback_data="adm_7days")],
-        [InlineKeyboardButton(text="📊 Oxirgi 30 kun",         callback_data="adm_30days")],
-        [InlineKeyboardButton(text="📅 Sana tanlash",          callback_data="adm_manual_date")],
-        [InlineKeyboardButton(text="🚗 Mashina bo'yicha",      callback_data="adm_by_car")],
-        [InlineKeyboardButton(text="👤 Haydovchi bo'yicha",    callback_data="adm_by_driver")],
-        [InlineKeyboardButton(text="🏆 Umumiy reyting",        callback_data="adm_rating")],
-        [InlineKeyboardButton(text="🚛 Haydovchilar holati",   callback_data="adm_cars_status")],
-        [InlineKeyboardButton(text="❌ Yopish",                callback_data="adm_close")],
+        [InlineKeyboardButton(text="📋 Aktiv buyurtmalar",       callback_data="adm_active")],
+        [InlineKeyboardButton(text="❌ Buyurtmani bekor qilish",  callback_data="adm_cancel_order")],
+        [InlineKeyboardButton(text="📊 Bugungi hisobot",         callback_data="adm_today")],
+        [InlineKeyboardButton(text="📊 Kechagi hisobot",         callback_data="adm_yesterday")],
+        [InlineKeyboardButton(text="📊 Oxirgi 7 kun",            callback_data="adm_7days")],
+        [InlineKeyboardButton(text="📊 Oxirgi 30 kun",           callback_data="adm_30days")],
+        [InlineKeyboardButton(text="📅 Sana tanlash",            callback_data="adm_manual_date")],
+        [InlineKeyboardButton(text="🚗 Mashina bo'yicha",        callback_data="adm_by_car")],
+        [InlineKeyboardButton(text="👤 Haydovchi bo'yicha",      callback_data="adm_by_driver")],
+        [InlineKeyboardButton(text="🏆 Umumiy reyting",          callback_data="adm_rating")],
+        [InlineKeyboardButton(text="🚛 Haydovchilar holati",     callback_data="adm_cars_status")],
+        [InlineKeyboardButton(text="❌ Yopish",                  callback_data="adm_close")],
     ])
 
 def _date_range(now, kind: str):
@@ -121,7 +122,8 @@ def _build_summary_report(orders: list, label: str) -> str:
     """Build a full stats report for a list of orders."""
     total = len(orders)
     done = [o for o in orders if o.get("current_status") == "YAKUNLANDI"]
-    active = [o for o in orders if o.get("current_status") not in ("YAKUNLANDI",) and not o.get("current_status", "").startswith("ERROR")]
+    cancelled = [o for o in orders if o.get("current_status") == "BEKOR_QILINDI"]
+    active = [o for o in orders if o.get("current_status") not in ("YAKUNLANDI", "BEKOR_QILINDI") and not o.get("current_status", "").startswith("ERROR")]
     errors = [o for o in orders if o.get("current_status", "").startswith("ERROR")]
 
     # Per-driver stats
@@ -145,7 +147,8 @@ def _build_summary_report(orders: list, label: str) -> str:
         f"📦 Jami buyurtmalar: *{total}*",
         f"✅ Yakunlangan: *{len(done)}*",
         f"🚚 Yo'lda / Aktiv: *{len(active)}*",
-        f"❌ Xatoliklar: *{len(errors)}*",
+        f"❌ Bekor qilingan: *{len(cancelled)}*",
+        f"⚠️ Xatoliklar: *{len(errors)}*",
     ]
 
     if ranking:
@@ -163,15 +166,26 @@ def _build_summary_report(orders: list, label: str) -> str:
 def _build_active_text(orders: list) -> str:
     if not orders:
         return "✅ Hozir aktiv buyurtmalar yo'q."
+    now = datetime.now(tz)
     lines = [f"📋 *Aktiv buyurtmalar: {len(orders)} ta*\n"]
     for o in orders[:20]:
         acc = parse_dt(o.get("accepted_at"))
-        acc_str = acc.strftime("%H:%M") if acc else "?"
+        acc_str = acc.strftime("%H:%M") if acc else "Qabul qilinmagan"
+        elapsed = ""
+        if acc:
+            mins = int((now - acc).total_seconds() / 60)
+            elapsed = f" ({mins} dq)"
+        status = o.get('current_status', '-')
+        status_icons = {
+            'SENT': '📤', 'QABUL_QILINDI': '📥', 'YOLDA': '🛣', 'YAKUNLANDI': '✅',
+        }
+        icon = status_icons.get(status, '🔄')
         lines.append(
-            f"🔹 #{o['order_id']} | {o.get('car_number','-')} | {o.get('driver_name','-')}\n"
+            f"🔹 *#{o['order_id']}* | {o.get('car_number','-')} | {o.get('driver_name','-')}\n"
             f"   📍 {o.get('address','-')}\n"
-            f"   ⏰ Qabul: {acc_str} | Holat: {o.get('current_status','-')}"
+            f"   ⏰ {acc_str}{elapsed} | {icon} {status}"
         )
+    lines.append("\n💡 Bekor qilish uchun: *❌ Buyurtmani bekor qilish* ni bosing")
     return "\n".join(lines)
 
 
@@ -503,6 +517,206 @@ async def show_rating(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"adm_rating error: {e}")
         await callback.message.answer("⚠️ Xatolik.", reply_markup=_back_kb())
+
+# ─── Order cancellation flow ────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "adm_cancel_order")
+async def start_cancel_order(callback: CallbackQuery, state: FSMContext):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
+    await callback.answer()
+    await state.set_state(AdminProcess.waiting_for_order_id)
+    await state.update_data(cancel_mode=True)
+    try:
+        await callback.message.edit_text(
+            "❌ *Buyurtmani bekor qilish*\n\n"
+            "Bekor qilmoqchi bo'lgan buyurtma *ID* sini kiriting:\n\n"
+            "Masalan: `P14095` yoki `S32013`\n\n"
+            "📋 Aktiv buyurtmalar ro'yxatini ko'rish uchun «Aktiv buyurtmalar» bo'limiga kiring.",
+            parse_mode="Markdown",
+            reply_markup=_back_kb()
+        )
+    except Exception:
+        await callback.message.answer(
+            "❌ Bekor qilinadigan buyurtma ID sini kiriting:",
+            reply_markup=_back_kb()
+        )
+
+
+@router.message(AdminProcess.waiting_for_order_id, F.text)
+async def process_order_id_for_cancel(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id): return
+    data = await state.get_data()
+    if not data.get('cancel_mode'):
+        return
+
+    order_id = message.text.strip()
+    order = await asyncio.to_thread(get_order, order_id)
+
+    if not order:
+        await message.answer(
+            f"❌ *Buyurtma topilmadi:* `{order_id}`\n\n"
+            f"ID to'g'ri ekanligini tekshiring va qaytadan kiriting.\n"
+            f"Yoki /admin dan Aktiv buyurtmalar bo'limiga kiring.",
+            parse_mode="Markdown",
+            reply_markup=_back_kb()
+        )
+        return
+
+    status = order.get('current_status', '-')
+    if status in ('YAKUNLANDI', 'BEKOR_QILINDI'):
+        await message.answer(
+            f"⚠️ #{order_id} buyurtmasi allaqachon *{status}* holatida.\n"
+            f"Bekor qilish mumkin emas.",
+            parse_mode="Markdown",
+            reply_markup=_back_kb()
+        )
+        await state.clear()
+        return
+
+    acc = parse_dt(order.get('accepted_at'))
+    sent_at = parse_dt(order.get('created_at'))
+    acc_str = acc.strftime('%d.%m.%Y %H:%M') if acc else '—'
+    sent_str = sent_at.strftime('%d.%m.%Y %H:%M') if sent_at else '—'
+
+    text = (
+        f"📋 *Buyurtma ma'lumotlari:*\n\n"
+        f"🆔 ID: `{order.get('order_id')}`\n"
+        f"👤 Haydovchi: {order.get('driver_name', '—')}\n"
+        f"🚗 Mashina: {order.get('car_number', '—')}\n"
+        f"📍 Manzil: {order.get('address', '—')}\n"
+        f"📦 Yuk: {order.get('cargo', '—')}\n"
+        f"📊 Holat: *{status}*\n"
+        f"📤 Yuborilgan: {sent_str}\n"
+        f"✅ Qabul: {acc_str}\n\n"
+        f"⚠️ *Bu buyurtmani bekor qilasizmi?*\n"
+        f"Haydovchiga va guruhga xabar yuboriladi."
+    )
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, bekor qilish", callback_data=f"adm_confirm_cancel_{order_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data="adm_back")
+        ]
+    ])
+
+    await state.update_data(cancel_order_id=order_id)
+    await message.answer(text, parse_mode="Markdown", reply_markup=confirm_kb)
+
+
+@router.callback_query(F.data.startswith("adm_confirm_cancel_"))
+async def confirm_cancel_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
+    await callback.answer()
+
+    order_id = callback.data[len("adm_confirm_cancel_"):]
+
+    from core.db import cancel_order_in_db
+    from core.sheets import cancel_order_in_sheets, remove_order_from_driver_sheet
+    from core.config import BRANCHES, GROUP_CHAT_ID
+
+    order = await asyncio.to_thread(get_order, order_id)
+    if not order:
+        await callback.message.answer("❌ Buyurtma topilmadi.")
+        await state.clear()
+        return
+
+    try:
+        await callback.message.edit_text(f"⏳ #{order_id} bekor qilinmoqda...")
+    except Exception:
+        pass
+
+    car_number  = order.get('car_number', '')
+    driver_tid  = order.get('driver_telegram_id')
+    filial      = order.get('filial', '')
+    address     = order.get('address', '-')
+    driver_name = order.get('driver_name', '-')
+
+    results = []
+
+    # 1. Update DB
+    ok_db = await asyncio.to_thread(cancel_order_in_db, order_id)
+    results.append(f"{'✅' if ok_db else '⚠️'} Ma'lumotlar bazasi")
+
+    # 2. Update orders sheet
+    ok_sheet = await asyncio.to_thread(cancel_order_in_sheets, order_id)
+    results.append(f"{'✅' if ok_sheet else '⚠️'} Google Sheets (buyurtmalar)")
+
+    # 3. Remove from driver sheet
+    if car_number:
+        ok_driver_sheet = await asyncio.to_thread(remove_order_from_driver_sheet, car_number, order_id)
+        results.append(f"{'✅' if ok_driver_sheet else '⚠️'} Google Sheets (haydovchi)")
+
+    # 4. Notify driver
+    if driver_tid:
+        try:
+            await bot.send_message(
+                chat_id=driver_tid,
+                text=(
+                    f"❌ *Buyurtma bekor qilindi!*\n\n"
+                    f"🆔 #{order_id} buyurtmangiz *admin tomonidan bekor qilindi*.\n"
+                    f"📍 Manzil: {address}\n\n"
+                    f"Yangi buyurtmalar uchun botni kuting."
+                ),
+                parse_mode="Markdown"
+            )
+            results.append("✅ Haydovchiga xabar")
+        except Exception as e:
+            logger.warning(f"Could not notify driver {driver_tid}: {e}")
+            results.append("⚠️ Haydovchiga xabar (yuborilmadi)")
+
+    # 5. Notify group
+    group_id = GROUP_CHAT_ID
+    if filial and filial in BRANCHES:
+        group_id = BRANCHES[filial].get('group_id') or GROUP_CHAT_ID
+
+    if group_id and str(group_id) != "0":
+        try:
+            await bot.send_message(
+                chat_id=group_id,
+                text=(
+                    f"❌ *Buyurtma bekor qilindi!*\n\n"
+                    f"🆔 #{order_id}\n"
+                    f"👤 {driver_name} | 🚗 {car_number}\n"
+                    f"📍 {address}\n\n"
+                    f"📊 Admin tomonidan bekor qilindi."
+                ),
+                parse_mode="Markdown"
+            )
+            results.append("✅ Guruhga xabar")
+        except Exception as e:
+            logger.warning(f"Could not notify group {group_id}: {e}")
+            results.append("⚠️ Guruhga xabar (yuborilmadi)")
+
+    # 6. Delete group interim message
+    msg_id = order.get('group_message_id')
+    if msg_id and group_id and str(group_id) != "0":
+        try:
+            await bot.delete_message(chat_id=group_id, message_id=int(msg_id))
+        except Exception:
+            pass
+
+    await state.clear()
+
+    results_text = "\n".join(results)
+    try:
+        await callback.message.edit_text(
+            f"✅ *#{order_id} buyurtmasi muvaffaqiyatli bekor qilindi!*\n\n"
+            f"{results_text}\n\n"
+            f"Boshqa buyurtma bekor qilish uchun yana ID kiriting.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Yana bekor qilish", callback_data="adm_cancel_order")],
+                [InlineKeyboardButton(text="🔙 Admin panel", callback_data="adm_back")]
+            ])
+        )
+    except Exception:
+        await callback.message.answer(
+            f"✅ #{order_id} bekor qilindi.\n{results_text}",
+            reply_markup=_back_kb()
+        )
+
 
 # ─── Stale/unknown callbacks ───────────────────────────────────────────────────
 
