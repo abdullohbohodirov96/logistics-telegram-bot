@@ -23,6 +23,10 @@ _job_lock = asyncio.Lock()
 # Types: 'unaccepted_1hr', 'stale_2hr', 'stale_6hr'
 REMINDER_SENT = {}
 
+# branch_name memory: {order_id: branch_name} — used for group routing when
+# filial column doesn't exist in Supabase yet
+_ORDER_BRANCH: dict = {}
+
 TIMEZONE = "Asia/Tashkent"
 _tz = pytz.timezone(TIMEZONE)
 
@@ -192,14 +196,14 @@ async def check_sheets_job(bot: Bot):
                             continue
 
                         # Update DB to SENT with driver info
-                        # filial = branch_name (qaysi sheets sahifasidan kelgan)
-                        # Driver sheetdagi filial ustuni ISHLATILMAYDI
+                        # branch_name is kept in _ORDER_BRANCH (in-memory) since
+                        # Supabase orders table may not have a filial column yet
                         await asyncio.to_thread(update_order, order_id, {
                             'current_status':     'SENT',
                             'driver_telegram_id': str(telegram_id),
                             'driver_name':        driver.get('driver_name', ''),
-                            'filial':             branch_name,
                         })
+                        _ORDER_BRANCH[order_id] = branch_name
 
                         # Update sheets
                         await asyncio.sleep(1)
@@ -265,7 +269,7 @@ async def send_driver_reminders(bot: Bot):
             driver_name  = order.get('driver_name', '-')
             car_number   = order.get('car_number', '-')
             address      = order.get('address', '-')
-            filial       = order.get('filial', '')
+            filial       = _ORDER_BRANCH.get(order_id) or order.get('filial', '')
             group_id     = _get_group_id_for_filial(filial)
 
             # Remind driver
@@ -355,7 +359,7 @@ async def send_driver_reminders(bot: Bot):
             driver_name = order.get('driver_name', '-')
             car_number  = order.get('car_number', '-')
             address     = order.get('address', '-')
-            filial      = order.get('filial', '')
+            filial      = _ORDER_BRANCH.get(order_id) or order.get('filial', '')
             group_id    = _get_group_id_for_filial(filial)
 
             # ── 6-hour urgent reminder: driver + group ──────────────────────
