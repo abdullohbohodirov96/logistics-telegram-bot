@@ -82,25 +82,18 @@ def build_interim_report(order):
     return text
 
 async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
-    """Send/edit interim report to the correct group based on driver's filial."""
+    """Send/edit interim report to the correct group.
+    Group is determined by order's filial (= which orders sheet it came from).
+    """
     try:
         order = await asyncio.to_thread(get_order, order_id)
         if not order or order.get('current_status') == 'YAKUNLANDI': return
 
-        # Determine correct group
+        # Determine correct group from order's filial (saved at dispatch time)
         from core.config import BRANCHES
-        from core.sheets import get_drivers
         target_group = override_group_id
         if not target_group:
             filial = order.get('filial', '') or ''
-            if not filial:
-                car_number = order.get('car_number', '')
-                if car_number:
-                    drivers = await asyncio.to_thread(get_drivers)
-                    dr = drivers.get(car_number)
-                    if dr:
-                        filial = dr.get('filial', '')
-            
             if filial and filial in BRANCHES:
                 target_group = BRANCHES[filial].get('group_id') or GROUP_CHAT_ID
             else:
@@ -752,19 +745,11 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 await asyncio.to_thread(update_order, order_id, {'finished_at': now, 'completed_at': now, 'current_status': 'YAKUNLANDI'})
                 await asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI')
                 
-                # Get correct group
+                # Get correct group — from order's filial (= source orders sheet)
+                # Driver sheetdagi filial ishlatilmaydi
                 from core.config import BRANCHES, GROUP_CHAT_ID as DEFAULT_GROUP_ID
-                from core.sheets import get_drivers
                 target_group = DEFAULT_GROUP_ID
                 filial = order.get('filial', '') or ''
-                if not filial:
-                    car_number = order.get('car_number', '')
-                    if car_number:
-                        drivers = await asyncio.to_thread(get_drivers)
-                        dr = drivers.get(car_number)
-                        if dr:
-                            filial = dr.get('filial', '')
-                            
                 if filial and filial in BRANCHES:
                     target_group = BRANCHES[filial].get('group_id') or DEFAULT_GROUP_ID
 

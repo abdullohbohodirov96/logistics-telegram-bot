@@ -46,16 +46,6 @@ def _mark_reminder_sent(order_id: str, reminder_type: str):
     REMINDER_SENT[order_id][reminder_type] = _now()
 
 
-def _get_group_id_for_driver(driver: dict) -> str:
-    """Return the correct Telegram group_id based on driver's filial."""
-    from core.config import BRANCHES, GROUP_CHAT_ID
-    filial = (driver.get('filial') or '').strip()
-    if filial and filial in BRANCHES:
-        gid = BRANCHES[filial].get('group_id', GROUP_CHAT_ID)
-        return gid or GROUP_CHAT_ID
-    return GROUP_CHAT_ID
-
-
 def _get_group_id_for_filial(filial: str) -> str:
     from core.config import BRANCHES, GROUP_CHAT_ID
     if filial and filial in BRANCHES:
@@ -202,12 +192,13 @@ async def check_sheets_job(bot: Bot):
                             continue
 
                         # Update DB to SENT with driver info
-                        filial_for_order = driver.get('filial', branch_name) or branch_name
+                        # filial = branch_name (qaysi sheets sahifasidan kelgan)
+                        # Driver sheetdagi filial ustuni ISHLATILMAYDI
                         await asyncio.to_thread(update_order, order_id, {
-                            'current_status':    'SENT',
+                            'current_status':     'SENT',
                             'driver_telegram_id': str(telegram_id),
                             'driver_name':        driver.get('driver_name', ''),
-                            'filial':             filial_for_order,
+                            'filial':             branch_name,
                         })
 
                         # Update sheets
@@ -223,10 +214,10 @@ async def check_sheets_job(bot: Bot):
 
                         PROCESSED_ORDERS[order_id] = True
 
-                        # Group interim report
-                        driver_group_id = _get_group_id_for_driver(driver) or group_id
+                        # Group interim report — group_id = branch_cfg ning guruh ID si
+                        # (qaysi sheets sahifasidan kelgan, o'sha filialning guruhi)
                         from core.handlers.delivery import update_group_report
-                        await update_group_report(bot, order_id, override_group_id=driver_group_id)
+                        await update_group_report(bot, order_id, override_group_id=group_id)
 
                     except Exception as e:
                         logger.error(f"❌ Error processing #{order_id}: {e}")

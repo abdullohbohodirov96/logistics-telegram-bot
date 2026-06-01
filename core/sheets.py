@@ -148,12 +148,12 @@ def get_drivers():
             car_raw = str(row[0]).strip().upper()
             if not car_raw:
                 continue
-            filial = row[3].strip() if len(row) > 3 else ""
+            # filial ustuni (D) endi ishlatilmaydi — order qaysi sheetda
+            # yozilgan bo'lsa, o'sha branch aniqlanadi scheduler orqali
             status = row[4].strip() if len(row) > 4 else "BO'SH"
             drivers[car_raw] = {
                 'driver_name': row[1],
                 'telegram_id': row[2],
-                'filial':      filial,
                 'status':      status,
             }
             
@@ -433,7 +433,6 @@ def get_driver_by_tid(tid):
                 return {
                     'car_number':       row[0],
                     'driver_name':      row[1],
-                    'filial':           row[3] if len(row) > 3 else "",
                     'status':           row[4] if len(row) > 4 else "",
                     'current_order_id': row[5] if len(row) > 5 else "",
                 }
@@ -462,7 +461,6 @@ def get_drivers_status_list():
             result.append({
                 'car_number':  r[0].strip().upper(),
                 'driver_name': r[1] if len(r) > 1 else "",
-                'filial':      r[3] if len(r) > 3 else "",
                 'status':      r[4] if len(r) > 4 else "BO'SH",
                 'order_id':    r[5] if len(r) > 5 else "",
             })
