@@ -277,7 +277,7 @@ async def close_admin(callback: CallbackQuery, state: FSMContext):
 async def show_active(callback: CallbackQuery):
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
-    await callback.answer("⏳ Yuklanmoqda...")
+    await callback.answer()
     try:
         orders = await asyncio.to_thread(get_active_orders)
         text   = _build_active_text(orders)
@@ -290,8 +290,8 @@ async def show_active(callback: CallbackQuery):
         except Exception:
             await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
-        logger.error(f"adm_active error: {e}")
-        await callback.message.answer("⚠️ Ma'lumot olishda xatolik. Qayta urinib ko'ring.", reply_markup=_back_kb())
+        logger.error(f"adm_active error: {e}", exc_info=True)
+        await callback.message.answer(f"⚠️ Xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 
 # ─── Hisobot submenu ──────────────────────────────────────────────────────────
@@ -333,8 +333,8 @@ async def _send_report(callback: CallbackQuery, kind: str, label: str):
         except Exception:
             await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
-        logger.error(f"report ({kind}) error: {e}")
-        await callback.message.answer("⚠️ Hisobotni olishda xatolik yuz berdi.", reply_markup=_back_kb())
+        logger.error(f"report ({kind}) error: {e}", exc_info=True)
+        await callback.message.answer(f"⚠️ Hisobot xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 @router.callback_query(F.data == "adm_today")
 async def report_today(callback: CallbackQuery):
@@ -403,8 +403,8 @@ async def process_manual_date(message: Message, state: FSMContext):
         text = _build_report(orders, date_label, filter_label)
         await message.answer(text, parse_mode="Markdown", reply_markup=_back_kb())
     except Exception as e:
-        logger.error(f"manual date report error: {e}")
-        await message.answer("⚠️ Hisobotni olishda xatolik yuz berdi.", reply_markup=_back_kb())
+        logger.error(f"manual date report error: {e}", exc_info=True)
+        await message.answer(f"⚠️ Hisobot xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 
 # ─── Mashina / Haydovchi bo'yicha ─────────────────────────────────────────────
@@ -445,8 +445,8 @@ async def show_cars(callback: CallbackQuery, state: FSMContext):
         except Exception:
             await callback.message.answer("🚗 Mashina tanlang:", reply_markup=builder.as_markup())
     except Exception as e:
-        logger.error(f"adm_by_car: {e}")
-        await callback.message.answer("⚠️ Mashinalar ro'yxatini olishda xatolik.", reply_markup=_back_kb())
+        logger.error(f"adm_by_car: {e}", exc_info=True)
+        await callback.message.answer(f"⚠️ Mashinalar xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 
 @router.callback_query(F.data.startswith("adm_car_"))
@@ -493,8 +493,8 @@ async def show_drivers(callback: CallbackQuery, state: FSMContext):
         except Exception:
             await callback.message.answer("👤 Haydovchi tanlang:", reply_markup=builder.as_markup())
     except Exception as e:
-        logger.error(f"adm_by_driver: {e}")
-        await callback.message.answer("⚠️ Haydovchilar ro'yxatini olishda xatolik.", reply_markup=_back_kb())
+        logger.error(f"adm_by_driver: {e}", exc_info=True)
+        await callback.message.answer(f"⚠️ Haydovchilar xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 
 @router.callback_query(F.data.startswith("adm_drv_"))
@@ -597,8 +597,8 @@ async def show_rating(callback: CallbackQuery):
         except Exception:
             await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
-        logger.error(f"adm_rating error: {e}")
-        await callback.message.answer("⚠️ Reytingni hisoblashda xatolik yuz berdi.", reply_markup=_back_kb())
+        logger.error(f"adm_rating error: {e}", exc_info=True)
+        await callback.message.answer(f"⚠️ Reyting xatolik:\n<code>{e}</code>", parse_mode="HTML", reply_markup=_back_kb())
 
 
 # ─── Buyurtmani bekor qilish / yakunlash ──────────────────────────────────────
