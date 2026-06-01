@@ -119,19 +119,24 @@ async def check_sheets_job(bot: Bot):
                             continue
 
                         # Create in DB if missing
+                        # NOTE: filial is NOT included here — it's saved later via update_order
+                        # which validates column existence. Direct insert would fail if column missing.
                         if not db_order:
-                            car_num = order['car_number'].strip().upper()
-                            driver_info = drivers.get(car_num, {})
-                            filial_val = driver_info.get('filial', branch_name) if driver_info else branch_name
-                            await asyncio.to_thread(create_order, {
-                                'order_id':      order_id,
-                                'car_number':    car_num,
-                                'address':       order['address'],
-                                'cargo':         order['cargo'],
-                                'comment':       order['comment'],
-                                'filial':        filial_val,
+                            ok = await asyncio.to_thread(create_order, {
+                                'order_id':       order_id,
+                                'car_number':     order['car_number'].strip().upper(),
+                                'address':        order['address'],
+                                'cargo':          order['cargo'],
+                                'comment':        order['comment'],
                                 'current_status': 'NEW'
                             })
+                            if not ok:
+                                # Re-check: maybe it was created by a parallel run
+                                db_order = await asyncio.to_thread(get_order, order_id)
+                                if not db_order:
+                                    logger.error(f"❌ #{order_id} could not be created in DB. Skipping.")
+                                    PROCESSED_ORDERS[order_id] = True
+                                    continue
 
                         car_number = order['car_number'].strip().upper()
                         driver = drivers.get(car_number)

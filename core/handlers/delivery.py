@@ -133,26 +133,41 @@ async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
     order_id = callback.data.split("_")[1]
 
-    # Check order is still valid (not cancelled)
-    order_check = await asyncio.to_thread(get_order, order_id)
-    if not order_check:
-        await callback.answer("❌ Buyurtma topilmadi!", show_alert=True)
+    # Answer immediately — prevents button from "freezing" while DB is checked
+    await callback.answer()
+
+    try:
+        order_check = await asyncio.to_thread(get_order, order_id)
+    except Exception as e:
+        logger.error(f"handle_take_delivery: get_order error for #{order_id}: {e}")
+        await callback.message.answer("⚠️ Tizimda xatolik yuz berdi. Keyinroq urinib ko'ring.")
         return
-    if order_check.get('current_status') == 'BEKOR_QILINDI':
-        await callback.answer("❌ Bu buyurtma admin tomonidan bekor qilingan!", show_alert=True)
+
+    if not order_check:
+        await callback.message.answer(
+            f"❌ Buyurtma #{order_id} topilmadi!\n\n"
+            f"Bu xatolik yuz bergan bo'lishi mumkin. Admin bilan bog'laning."
+        )
+        return
+
+    status = order_check.get('current_status', '')
+
+    if status == 'BEKOR_QILINDI':
         try:
             await callback.message.edit_text(
                 f"❌ #{order_id} buyurtmasi admin tomonidan bekor qilingan.\n"
                 f"Yangi buyurtmalar uchun kutib turing."
             )
         except Exception:
-            pass
-        return
-    if order_check.get('current_status') not in ('NEW', 'SENT', None, ''):
-        await callback.answer("ℹ️ Bu buyurtma allaqachon qabul qilingan.", show_alert=True)
+            await callback.message.answer("❌ Bu buyurtma admin tomonidan bekor qilingan.")
         return
 
-    await callback.answer()
+    if status not in ('NEW', 'SENT', None, ''):
+        await callback.message.answer(
+            f"ℹ️ #{order_id} buyurtmasi allaqachon qabul qilingan ({status}).\n"
+            f"Aktiv buyurtmalarni ko'rish uchun /start bosing."
+        )
+        return
 
     data = await state.get_data()
     existing_order_id = data.get('order_id')
