@@ -150,7 +150,7 @@ def get_drivers():
                 continue
             # filial ustuni (D) endi ishlatilmaydi — order qaysi sheetda
             # yozilgan bo'lsa, o'sha branch aniqlanadi scheduler orqali
-            status = row[4].strip() if len(row) > 4 else "BO'SH"
+            status = row[3].strip() if len(row) > 3 else "BO'SH"
             drivers[car_raw] = {
                 'driver_name': row[1],
                 'telegram_id': row[2],
@@ -280,7 +280,7 @@ def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
 def update_driver_status_sheet(car_number, status, order_id=""):
     """
     Updates drivers sheet using batch_update (1 API call instead of 3).
-    Col E=status, F=order_ids, G=count
+    Col D=status, E=order_ids, F=count
     """
     if not car_number:
         logger.warning("[DRIVER_SHEET] car_number is empty, skipping.")
@@ -300,16 +300,16 @@ def update_driver_status_sheet(car_number, status, order_id=""):
             row = cell.row
 
             if status == "BO'SH" or not order_id:
-                # Single batch: clear E, F, G
+                # Single batch: clear D, E, F
                 worksheet.batch_update([{
-                    'range': f'E{row}:G{row}',
+                    'range': f'D{row}:F{row}',
                     'values': [[status, "", ""]]
                 }])
                 logger.info(f"[DRIVER_SHEET] car={car_number} → BO'SH, cleared")
             else:
-                # Read F first, then batch update E, F, G
+                # Read E first, then batch update D, E, F
                 row_vals = worksheet.row_values(row)
-                existing_raw = row_vals[5] if len(row_vals) > 5 else ""
+                existing_raw = row_vals[4] if len(row_vals) > 4 else ""
                 existing_ids = [x.strip() for x in existing_raw.split("/") if x.strip()]
                 if str(order_id).strip() not in existing_ids:
                     existing_ids.append(str(order_id).strip())
@@ -318,7 +318,7 @@ def update_driver_status_sheet(car_number, status, order_id=""):
                 count_str = f"{len(existing_ids)} ta"
 
                 worksheet.batch_update([{
-                    'range': f'E{row}:G{row}',
+                    'range': f'D{row}:F{row}',
                     'values': [[status, joined, count_str]]
                 }])
                 logger.info(f"[DRIVER_SHEET] car={car_number} status={status} orders='{joined}' count={count_str}")
@@ -352,7 +352,7 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
 
             row = cell.row
             row_vals = worksheet.row_values(row)
-            existing_raw = row_vals[5] if len(row_vals) > 5 else ""
+            existing_raw = row_vals[4] if len(row_vals) > 4 else ""
             existing_ids = [x.strip() for x in existing_raw.split("/") if x.strip()]
             existing_ids = [x for x in existing_ids if x != str(finished_order_id).strip()]
 
@@ -360,13 +360,13 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
                 joined = "/".join(existing_ids)
                 count_str = f"{len(existing_ids)} ta"
                 worksheet.batch_update([{
-                    'range': f'E{row}:G{row}',
+                    'range': f'D{row}:F{row}',
                     'values': [["YUK OGAN", joined, count_str]]
                 }])
                 logger.info(f"[DRIVER_SHEET] Removed {finished_order_id} from {car_number}. Remaining: {joined}")
             else:
                 worksheet.batch_update([{
-                    'range': f'E{row}:G{row}',
+                    'range': f'D{row}:F{row}',
                     'values': [["BO'SH", "", ""]]
                 }])
                 logger.info(f"[DRIVER_SHEET] {car_number} → BO'SH (no more orders)")
@@ -433,8 +433,8 @@ def get_driver_by_tid(tid):
                 return {
                     'car_number':       row[0],
                     'driver_name':      row[1],
-                    'status':           row[4] if len(row) > 4 else "",
-                    'current_order_id': row[5] if len(row) > 5 else "",
+                    'status':           row[3] if len(row) > 3 else "",
+                    'current_order_id': row[4] if len(row) > 4 else "",
                 }
         return None
     except Exception as e:
@@ -461,8 +461,8 @@ def get_drivers_status_list():
             result.append({
                 'car_number':  r[0].strip().upper(),
                 'driver_name': r[1] if len(r) > 1 else "",
-                'status':      r[4] if len(r) > 4 else "BO'SH",
-                'order_id':    r[5] if len(r) > 5 else "",
+                'status':      r[3] if len(r) > 3 else "BO'SH",
+                'order_id':    r[4] if len(r) > 4 else "",
             })
         return result
     except Exception as e:
