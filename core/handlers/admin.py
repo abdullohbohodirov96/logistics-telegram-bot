@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from core.config import ADMIN_IDS, TIMEZONE
-from core.db import get_history, get_active_orders, get_orders_by_date_range, get_order
+from core.db import get_history, get_active_orders, get_orders_by_date_range, get_order, update_order
 from core.states import AdminProcess
 from core.handlers.history import format_delivery_short
 from core.utils import format_duration_detailed, get_seconds_diff, parse_dt
@@ -564,10 +564,9 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
         return
 
     status = order.get('current_status', '-')
-    if status in ('YAKUNLANDI', 'BEKOR_QILINDI'):
+    if status == 'BEKOR_QILINDI':
         await message.answer(
-            f"⚠️ #{order_id} buyurtmasi allaqachon *{status}* holatida.\n"
-            f"Bekor qilish mumkin emas.",
+            f"⚠️ #{order_id} allaqachon *BEKOR QILINGAN*.",
             parse_mode="Markdown",
             reply_markup=_back_kb()
         )
@@ -589,15 +588,15 @@ async def process_order_id_for_cancel(message: Message, state: FSMContext):
         f"📊 Holat: *{status}*\n"
         f"📤 Yuborilgan: {sent_str}\n"
         f"✅ Qabul: {acc_str}\n\n"
-        f"⚠️ *Bu buyurtmani bekor qilasizmi?*\n"
-        f"Haydovchiga va guruhga xabar yuboriladi."
+        f"Quyidan amal tanlang:"
     )
 
     confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Ha, bekor qilish", callback_data=f"adm_confirm_cancel_{order_id}"),
-            InlineKeyboardButton(text="❌ Yo'q", callback_data="adm_back")
-        ]
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"adm_confirm_cancel_{order_id}"),
+            InlineKeyboardButton(text="✅ Yakunlash", callback_data=f"adm_confirm_finish_{order_id}"),
+        ],
+        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="adm_back")]
     ])
 
     await state.update_data(cancel_order_id=order_id)
@@ -714,6 +713,126 @@ async def confirm_cancel_order(callback: CallbackQuery, state: FSMContext, bot: 
     except Exception:
         await callback.message.answer(
             f"✅ #{order_id} bekor qilindi.\n{results_text}",
+            reply_markup=_back_kb()
+        )
+
+
+@router.callback_query(F.data.startswith("adm_confirm_finish_"))
+async def confirm_finish_order(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
+    await callback.answer()
+
+    order_id = callback.data[len("adm_confirm_finish_"):]
+
+    from core.sheets import cancel_order_in_sheets, remove_order_from_driver_sheet, update_order_status_by_order_id
+    from core.config import BRANCHES, GROUP_CHAT_ID
+    import datetime, pytz
+
+    order = await asyncio.to_thread(get_order, order_id)
+    if not order:
+        await callback.message.answer("❌ Buyurtma topilmadi.")
+        await state.clear()
+        return
+
+    try:
+        await callback.message.edit_text(f"⏳ #{order_id} yakunlanmoqda...")
+    except Exception:
+        pass
+
+    car_number  = order.get('car_number', '')
+    driver_tid  = order.get('driver_telegram_id')
+    filial      = order.get('filial', '')
+    address     = order.get('address', '-')
+    driver_name = order.get('driver_name', '-')
+
+    tz = pytz.timezone('Asia/Tashkent')
+    now_iso = datetime.datetime.now(tz).isoformat()
+
+    results = []
+
+    # 1. Update DB to YAKUNLANDI
+    await asyncio.to_thread(update_order, order_id, {
+        'current_status': 'YAKUNLANDI',
+        'completed_at': now_iso,
+    })
+    results.append("✅ Ma'lumotlar bazasi")
+
+    # 2. Update orders sheet
+    ok_sheet = await asyncio.to_thread(update_order_status_by_order_id, order_id, 'YAKUNLANDI')
+    results.append(f"✅ Google Sheets (buyurtmalar)")
+
+    # 3. Remove from driver sheet
+    if car_number:
+        ok_driver = await asyncio.to_thread(remove_order_from_driver_sheet, car_number, order_id)
+        results.append(f"{'✅' if ok_driver else '⚠️'} Google Sheets (haydovchi)")
+
+    # 4. Notify driver
+    if driver_tid:
+        try:
+            await bot.send_message(
+                chat_id=driver_tid,
+                text=(
+                    f"✅ *Buyurtma yakunlandi!*\n\n"
+                    f"🆔 #{order_id} buyurtmangiz *admin tomonidan yakunlandi*.\n"
+                    f"📍 Manzil: {address}"
+                ),
+                parse_mode="Markdown"
+            )
+            results.append("✅ Haydovchiga xabar")
+        except Exception as e:
+            logger.warning(f"Could not notify driver {driver_tid}: {e}")
+            results.append("⚠️ Haydovchiga xabar (yuborilmadi)")
+
+    # 5. Notify group
+    from core.scheduler import _ORDER_BRANCH
+    group_id = GROUP_CHAT_ID
+    branch = _ORDER_BRANCH.get(order_id) or filial
+    if branch and branch in BRANCHES:
+        group_id = BRANCHES[branch].get('group_id') or GROUP_CHAT_ID
+    if group_id and str(group_id) != "0":
+        try:
+            await bot.send_message(
+                chat_id=group_id,
+                text=(
+                    f"✅ *Buyurtma yakunlandi!*\n\n"
+                    f"🆔 #{order_id}\n"
+                    f"👤 {driver_name} | 🚗 {car_number}\n"
+                    f"📍 {address}\n\n"
+                    f"📊 Admin tomonidan yakunlandi."
+                ),
+                parse_mode="Markdown"
+            )
+            results.append("✅ Guruhga xabar")
+        except Exception as e:
+            logger.warning(f"Could not notify group {group_id}: {e}")
+            results.append("⚠️ Guruhga xabar (yuborilmadi)")
+
+    # 6. Delete group interim message
+    msg_id = order.get('group_message_id')
+    if msg_id and group_id and str(group_id) != "0":
+        try:
+            await bot.delete_message(chat_id=group_id, message_id=int(msg_id))
+        except Exception:
+            pass
+
+    await state.clear()
+
+    results_text = "\n".join(results)
+    try:
+        await callback.message.edit_text(
+            f"✅ *#{order_id} yakunlandi!*\n\n"
+            f"{results_text}\n\n"
+            f"Boshqa buyurtma uchun yana ID kiriting.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="adm_cancel_order")],
+                [InlineKeyboardButton(text="🔙 Admin panel", callback_data="adm_back")]
+            ])
+        )
+    except Exception:
+        await callback.message.answer(
+            f"✅ #{order_id} yakunlandi.\n{results_text}",
             reply_markup=_back_kb()
         )
 
