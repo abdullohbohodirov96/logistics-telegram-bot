@@ -300,6 +300,28 @@ def write_order_result_note(row_index: int, note: str, sheet_name: str = None):
 
 # ── update_driver_status_sheet ────────────────────────────────────────────────
 
+def _find_driver_row(worksheet, car_number):
+    """
+    Find the drivers-sheet row for a given car number by comparing
+    normalized values, not gspread's exact-match find().
+
+    worksheet.find() requires the query to exactly equal the raw cell
+    text, so searching with an already-normalized (spaces/dashes
+    stripped) value fails whenever the sheet's actual cell still has
+    its original spacing — which is exactly the formatting drift this
+    normalization exists to work around. Scanning column A ourselves
+    and normalizing both sides fixes that.
+    """
+    target = normalize_car_number(car_number)
+    if not target:
+        return None
+    col_values = worksheet.col_values(1)
+    for idx, val in enumerate(col_values, start=1):
+        if normalize_car_number(val) == target:
+            return idx
+    return None
+
+
 def update_driver_status_sheet(car_number, status, order_id=""):
     """
     Updates drivers sheet using batch_update (1 API call instead of 3).
@@ -315,12 +337,10 @@ def update_driver_status_sheet(car_number, status, order_id=""):
         def _do():
             sh = client.open_by_key(GOOGLE_SHEET_ID)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
-            cell = worksheet.find(normalize_car_number(car_number), in_column=1)
-            if not cell:
+            row = _find_driver_row(worksheet, car_number)
+            if not row:
                 logger.warning(f"[DRIVER_SHEET] '{car_number}' NOT FOUND.")
                 return False
-
-            row = cell.row
 
             if status == "BO'SH" or not order_id:
                 # Single batch: clear D, E, F
@@ -369,11 +389,9 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
         def _do():
             sh = client.open_by_key(GOOGLE_SHEET_ID)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
-            cell = worksheet.find(normalize_car_number(car_number), in_column=1)
-            if not cell:
+            row = _find_driver_row(worksheet, car_number)
+            if not row:
                 return False
-
-            row = cell.row
             row_vals = worksheet.row_values(row)
             existing_raw = row_vals[4] if len(row_vals) > 4 else ""
             existing_ids = [x.strip() for x in existing_raw.split("/") if x.strip()]

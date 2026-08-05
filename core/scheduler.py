@@ -127,6 +127,18 @@ async def check_sheets_job(bot: Bot):
                         logger.info(f"⏭ Skipping #{order_id} (already processed in memory).")
                         continue
 
+                    if not order_id or not order['car_number']:
+                        logger.error(f"❌ Bo'sh qator: ID='{order_id}' car='{order['car_number']}' (row {order['row_index']}).")
+                        await asyncio.to_thread(update_order_status, order['row_index'], 'QATOR_BOSH', sheet_name)
+                        await asyncio.to_thread(
+                            write_order_result_note, order['row_index'],
+                            "❌ Bu qatorda ID yoki mashina raqami bo'sh. Sheetda shu qatorni tekshiring "
+                            "va to'ldiring, keyin ustunni 'SEND'ga qaytaring.", sheet_name
+                        )
+                        if order_id:
+                            PROCESSED_ORDERS[order_id] = True
+                        continue
+
                     try:
                         logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
 
@@ -194,7 +206,9 @@ async def check_sheets_job(bot: Bot):
                             await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_TOPILMADI', sheet_name)
                             await asyncio.to_thread(
                                 write_order_result_note, order['row_index'],
-                                f"❌ '{car_number}' mashina raqami haydovchilar jadvalida topilmadi", sheet_name
+                                f"❌ '{car_number}' mashina raqami haydovchilar jadvalida topilmadi. "
+                                f"Nima qilish kerak: haydovchilar jadvaliga shu mashina raqamini qo'shing "
+                                f"(A ustun) yoki bu yerdagi raqamni to'g'rilang, keyin qayta 'SEND' qiling.", sheet_name
                             )
                             PROCESSED_ORDERS[order_id] = True
                             continue
@@ -205,7 +219,9 @@ async def check_sheets_job(bot: Bot):
                             await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_ID_YOQ', sheet_name)
                             await asyncio.to_thread(
                                 write_order_result_note, order['row_index'],
-                                f"❌ {driver.get('driver_name', car_number)} uchun Telegram ID kiritilmagan", sheet_name
+                                f"❌ {driver.get('driver_name', car_number)} uchun Telegram ID kiritilmagan. "
+                                f"Nima qilish kerak: haydovchilar jadvalida shu haydovchining Telegram ID "
+                                f"ustunini to'ldiring, keyin qayta 'SEND' qiling.", sheet_name
                             )
                             PROCESSED_ORDERS[order_id] = True
                             continue
@@ -217,7 +233,9 @@ async def check_sheets_job(bot: Bot):
                             await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_BAND', sheet_name)
                             await asyncio.to_thread(
                                 write_order_result_note, order['row_index'],
-                                f"⛔ {driver.get('driver_name', car_number)} da allaqachon {active_count} ta aktiv buyurtma bor (max 3)", sheet_name
+                                f"⛔ {driver.get('driver_name', car_number)} da allaqachon {active_count} ta aktiv buyurtma bor (max 3). "
+                                f"Nima qilish kerak: bu buyurtma avtomatik qayta yuborilmaydi — haydovchi "
+                                f"bo'shagach yoki boshqa haydovchiga berish uchun status ustunini qayta 'SEND' qiling.", sheet_name
                             )
                             PROCESSED_ORDERS[order_id] = True
                             continue
@@ -265,7 +283,10 @@ async def check_sheets_job(bot: Bot):
                             await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_XATOSI', sheet_name)
                             await asyncio.to_thread(
                                 write_order_result_note, order['row_index'],
-                                f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err})", sheet_name
+                                f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err}). "
+                                f"Nima qilish kerak: agar 'bot was blocked' bo'lsa — haydovchiga botni "
+                                f"qayta /start bosishini ayting, keyin qayta 'SEND' qiling; aks holda "
+                                f"Telegram ID to'g'riligini tekshiring.", sheet_name
                             )
                             await _notify_admins_tg_failure(bot, order_id, driver, car_number, tg_err)
                             PROCESSED_ORDERS[order_id] = True
