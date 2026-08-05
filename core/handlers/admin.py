@@ -40,6 +40,7 @@ def get_admin_panel_kb():
         [InlineKeyboardButton(text="📊 Hisobotni olish",               callback_data="adm_report_menu")],
         [InlineKeyboardButton(text="🏆 Umumiy reyting",                callback_data="adm_rating")],
         [InlineKeyboardButton(text="🚗 Mashina / Haydovchi hisoboti",  callback_data="adm_by_filter")],
+        [InlineKeyboardButton(text="🧹 Eski buyurtmalarni yopish (Reset)", callback_data="adm_reset_all")],
     ])
 
 def _report_menu_kb():
@@ -878,6 +879,83 @@ async def confirm_finish_order(callback: CallbackQuery, state: FSMContext, bot: 
         await callback.message.answer(
             f"✅ #{order_id} yakunlandi.\n{results_text}", reply_markup=done_kb
         )
+
+
+@router.callback_query(F.data == "adm_reset_all")
+async def start_reset_all(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
+    await callback.answer()
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Ha, hammasini yop", callback_data="adm_reset_all_confirm")],
+        [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="adm_back")],
+    ])
+    text = (
+        "⚠️ <b>Diqqat! To'liq reset qilinadi:</b>\n\n"
+        "• Bazadagi barcha yakunlanmagan buyurtmalar <b>ESKI_YOPILDI</b> deb belgilanadi\n"
+        "• Barcha filial sheetlaridagi <b>SEND</b> holatidagi (hali yuborilmagan) qatorlar yopiladi\n"
+        "• Haydovchilar jadvalidagi band/yuklangan statuslar tozalanadi (hammasi <b>BO'SH</b>)\n\n"
+        "Haydovchilarga hech qanday xabar yuborilmaydi (ular hech narsa qabul qilmagan). "
+        "Bu amalni ortga qaytarib bo'lmaydi. Davom etasizmi?"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=confirm_kb)
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=confirm_kb)
+
+
+@router.callback_query(F.data == "adm_reset_all_confirm")
+async def confirm_reset_all(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Ruxsat yo'q", show_alert=True); return
+    await callback.answer()
+
+    try:
+        await callback.message.edit_text("⏳ Reset qilinmoqda... (bir necha soniya)")
+    except Exception:
+        pass
+
+    from core.db import bulk_close_active_orders
+    from core.sheets import bulk_close_stuck_orders_in_sheets, bulk_reset_drivers_sheet
+    import core.scheduler as scheduler_mod
+
+    db_count       = await asyncio.to_thread(bulk_close_active_orders)
+    sheet_results  = await asyncio.to_thread(bulk_close_stuck_orders_in_sheets)
+    drivers_count  = await asyncio.to_thread(bulk_reset_drivers_sheet)
+
+    # Forget everything in memory too, so nothing lingers from before the reset.
+    scheduler_mod.PROCESSED_ORDERS.clear()
+    scheduler_mod.REMINDER_SENT.clear()
+
+    sheet_total = sum(sheet_results.values())
+    sheet_lines = "\n".join(f"   • {_e(name)}: {n} ta" for name, n in sheet_results.items()) or "   —"
+
+    summary = (
+        "✅ <b>To'liq reset yakunlandi!</b>\n\n"
+        f"🗄 Bazada yopildi: <b>{db_count} ta</b> buyurtma\n"
+        f"📋 Sheetlarda yopildi: <b>{sheet_total} ta</b>\n{sheet_lines}\n"
+        f"🚗 Haydovchilar tozalandi: <b>{drivers_count} ta</b>\n\n"
+        f"👤 Bajardi: {_e(callback.from_user.full_name)}\n\n"
+        "Tizim endi yangidan boshlaydi — bundan buyon kelgan yangi buyurtmalar "
+        "odatdagidek qayta ishlanadi."
+    )
+
+    done_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Admin panel", callback_data="adm_back")],
+    ])
+    try:
+        await callback.message.edit_text(summary, parse_mode="HTML", reply_markup=done_kb)
+    except Exception:
+        await callback.message.answer(summary, parse_mode="HTML", reply_markup=done_kb)
+
+    # Bot itself announces the reset to every other admin too, not just whoever clicked.
+    for admin_id in ADMIN_IDS:
+        if admin_id == callback.from_user.id:
+            continue
+        try:
+            await bot.send_message(chat_id=admin_id, text=summary, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"reset_all: failed to notify admin {admin_id}: {e}")
 
 
 # ─── Stale callbacks ───────────────────────────────────────────────────────────

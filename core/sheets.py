@@ -62,6 +62,16 @@ def get_gspread_client():
         return None
 
 
+def _col_letter(col_idx_1based: int) -> str:
+    """Convert a 1-based column index to its A1 letter (1->A, 27->AA, ...)."""
+    letters = ""
+    n = col_idx_1based
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
 def fuzzy_match_header(headers, target_names):
     for i, h in enumerate(headers):
         clean_h = str(h).strip().lower()
@@ -455,6 +465,105 @@ def cancel_order_in_sheets(order_id: str) -> bool:
     except Exception as e:
         logger.error(f"cancel_order_in_sheets error: {e}")
         return False
+
+
+def bulk_close_stuck_orders_in_sheets(target_status='SEND', new_status='ESKI_YOPILDI',
+                                       note_text="⏹ Admin: eski/backlog buyurtma tizim reset qilinganda yopildi."):
+    """
+    Full-reset action, sheet side: close every row whose status still equals
+    target_status (default 'SEND' — i.e. never got processed, the ones piling
+    up and causing the backlog) across every branch orders sheet.
+
+    Uses ONE read + ONE batch_update per sheet instead of a per-row API call,
+    since a per-row worksheet.find() loop over a large backlog would itself
+    hammer the Sheets rate limit and make the freeze worse.
+
+    Returns {sheet_name: count_closed}.
+    """
+    client = get_gspread_client()
+    if not client:
+        return {}
+    results = {}
+    try:
+        from core.config import BRANCHES
+        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        seen = set()
+        for b in BRANCHES.values():
+            sheet_name = b.get('orders_sheet', '')
+            if not sheet_name or sheet_name in seen:
+                continue
+            seen.add(sheet_name)
+
+            def _do(sheet_name=sheet_name):
+                ws = sh.worksheet(sheet_name)
+                values = ws.get_all_values()
+                if not values or len(values) < 2:
+                    return 0
+                headers = values[0]
+                status_idx = fuzzy_match_header(headers, ['status', 'holat'])
+                if status_idx == -1:
+                    return 0
+
+                status_col = _col_letter(status_idx + 1)
+                note_col = _col_letter(8)  # column H, same as write_order_result_note
+                updates = []
+                count = 0
+                for i, row in enumerate(values[1:], start=2):
+                    cur = row[status_idx].strip() if len(row) > status_idx else ""
+                    if cur.upper() == target_status.upper():
+                        updates.append({'range': f'{status_col}{i}', 'values': [[new_status]]})
+                        updates.append({'range': f'{note_col}{i}', 'values': [[note_text]]})
+                        count += 1
+                if updates:
+                    ws.batch_update(updates)
+                    logger.info(f"[SHEETS] bulk_close: {count} rows -> {new_status} in '{sheet_name}'")
+                return count
+
+            try:
+                results[sheet_name] = _retry(_do) or 0
+            except Exception as e:
+                logger.error(f"bulk_close_stuck_orders_in_sheets: sheet={sheet_name} err: {e}")
+                results[sheet_name] = 0
+    except Exception as e:
+        logger.error(f"bulk_close_stuck_orders_in_sheets error: {e}")
+    return results
+
+
+def bulk_reset_drivers_sheet():
+    """
+    Full-reset action, drivers-sheet side: clear status/active-orders/count
+    (columns D, E, F) for every driver row back to BO'SH / empty, since a
+    backlog reset invalidates whatever 'busy' state drivers were left in.
+    One read + one batch_update, not one call per driver row.
+
+    Returns the number of driver rows cleared.
+    """
+    client = get_gspread_client()
+    if not client:
+        return 0
+    try:
+        def _do():
+            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            ws = sh.worksheet(DRIVERS_SHEET_NAME)
+            values = ws.get_all_values()
+            if not values or len(values) < 2:
+                return 0
+            updates = []
+            count = 0
+            for i, row in enumerate(values[1:], start=2):
+                if not row or not row[0].strip():
+                    continue
+                updates.append({'range': f'D{i}:F{i}', 'values': [["BO'SH", "", ""]]})
+                count += 1
+            if updates:
+                ws.batch_update(updates)
+                logger.info(f"[SHEETS] bulk_reset_drivers_sheet: {count} drivers cleared")
+            return count
+
+        return _retry(_do) or 0
+    except Exception as e:
+        logger.error(f"bulk_reset_drivers_sheet error: {e}")
+        return 0
 
 
 # ── Helper read functions ─────────────────────────────────────────────────────

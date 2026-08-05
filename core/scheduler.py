@@ -153,7 +153,7 @@ async def check_sheets_job(bot: Bot):
                         if db_order and db_order.get('current_status') not in ('NEW', None, ''):
                             existing_status = db_order.get('current_status', '?')
 
-                            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI'):
+                            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI', 'ESKI_YOPILDI'):
                                 archived_id = await asyncio.to_thread(
                                     archive_duplicate_order_id, db_order.get('id'), order_id
                                 )

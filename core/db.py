@@ -134,6 +134,7 @@ def get_active_orders():
         response = (supabase.table('orders').select('*')
             .neq('current_status', 'YAKUNLANDI')
             .neq('current_status', 'BEKOR_QILINDI')
+            .neq('current_status', 'ESKI_YOPILDI')
             .order('created_at', desc=True).limit(50).execute())
         return response.data
     except Exception as e:
@@ -150,6 +151,7 @@ def get_active_orders_by_driver(driver_tid):
             .eq('driver_telegram_id', str(driver_tid))
             .neq('current_status', 'YAKUNLANDI')
             .neq('current_status', 'BEKOR_QILINDI')
+            .neq('current_status', 'ESKI_YOPILDI')
             .order('created_at', desc=True)
             .limit(10)
             .execute()
@@ -200,7 +202,7 @@ def get_dashboard_stats():
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         
         # Active orders (not YAKUNLANDI, not ERROR)
-        active_resp = supabase.table('orders').select('id', count='exact').neq('current_status', 'YAKUNLANDI').neq('current_status', 'ERROR_BOT_BLOCKED').execute()
+        active_resp = supabase.table('orders').select('id', count='exact').neq('current_status', 'YAKUNLANDI').neq('current_status', 'ERROR_BOT_BLOCKED').neq('current_status', 'ESKI_YOPILDI').execute()
         active_count = active_resp.count if active_resp.count else 0
         
         # Finished today
@@ -239,6 +241,7 @@ def get_active_orders_count(driver_tid: int) -> int:
             .eq('driver_telegram_id', driver_tid)
             .neq('current_status', 'YAKUNLANDI')
             .neq('current_status', 'BEKOR_QILINDI')
+            .neq('current_status', 'ESKI_YOPILDI')
             .execute())
         return response.count if response.count is not None else 0
     except Exception as e:
@@ -267,6 +270,36 @@ def get_driver_sent_orders_count(driver_tid) -> int:
     except Exception as e:
         logger.error(f"Error get_driver_sent_orders_count: {e}")
         return 0
+
+def bulk_close_active_orders() -> int:
+    """
+    Full-reset action: mark EVERY order that isn't already YAKUNLANDI/
+    BEKOR_QILINDI as ESKI_YOPILDI (a distinct 'closed during backlog reset'
+    status, so these are never confused with orders a driver actually
+    finished or a dispatcher actually cancelled).
+
+    Used when the sheet backlog has grown so large the scheduler is
+    struggling to keep up — wipes the slate clean so processing can
+    start fresh. Returns the number of rows updated.
+    """
+    try:
+        if not supabase:
+            return 0
+        resp = (
+            supabase.table('orders')
+            .update({'current_status': 'ESKI_YOPILDI'})
+            .neq('current_status', 'YAKUNLANDI')
+            .neq('current_status', 'BEKOR_QILINDI')
+            .neq('current_status', 'ESKI_YOPILDI')
+            .execute()
+        )
+        count = len(resp.data or [])
+        logger.info(f"bulk_close_active_orders: {count} orders -> ESKI_YOPILDI in Supabase")
+        return count
+    except Exception as e:
+        logger.error(f"Error bulk_close_active_orders: {e}")
+        return 0
+
 
 def cancel_order_in_db(order_id: str) -> bool:
     """Soft-cancel an order: set status to BEKOR_QILINDI."""
@@ -328,6 +361,7 @@ def get_drivers_admin_stats():
                 .eq('driver_telegram_id', tid)
                 .neq('current_status', 'YAKUNLANDI')
                 .neq('current_status', 'BEKOR_QILINDI')
+                .neq('current_status', 'ESKI_YOPILDI')
                 .execute())
             active = active_res.count if active_res.count is not None else 0
             
