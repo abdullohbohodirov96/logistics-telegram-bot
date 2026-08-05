@@ -41,6 +41,30 @@ def get_order(order_id: str):
         logger.error(f"Error getting order: {e}")
         return None
 
+def archive_duplicate_order_id(order_pk_id: str, old_order_id: str):
+    """
+    Free up an order_id that a finished/cancelled order is still holding,
+    so a brand-new shipment can reuse the same ID (the sheet's order IDs
+    can recycle over time). order_id has a UNIQUE constraint in Supabase,
+    so we can't just insert a second row with the same ID — instead we
+    rename the OLD row's order_id (matched precisely by its primary key,
+    not by order_id, since order_id is exactly what we're changing) to a
+    timestamped archive value, keeping its full history intact under a
+    new name while freeing the original ID for reuse.
+
+    Returns the new archived id string, or None on failure.
+    """
+    try:
+        if not supabase or not order_pk_id:
+            return None
+        archived_id = f"{old_order_id}~ARCH{int(time.time())}"
+        supabase.table('orders').update({'order_id': archived_id}).eq('id', order_pk_id).execute()
+        logger.info(f"Archived reused order_id '{old_order_id}' (pk={order_pk_id}) -> '{archived_id}'")
+        return archived_id
+    except Exception as e:
+        logger.error(f"Error archiving duplicate order_id '{old_order_id}': {e}")
+        return None
+
 def update_order(order_id: str, data: dict):
     try:
         if not supabase or not data: return

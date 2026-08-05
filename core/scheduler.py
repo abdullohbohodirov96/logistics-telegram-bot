@@ -9,7 +9,7 @@ from core.sheets import (
     update_driver_status_sheet, remove_order_from_driver_sheet,
     write_driver_order_count_to_orders_sheet, write_order_result_note
 )
-from core.db import create_order, get_order, update_order
+from core.db import create_order, get_order, update_order, archive_duplicate_order_id
 import core.keyboards as kb
 from core.utils import normalize_car_number
 from core.config import ADMIN_IDS
@@ -130,18 +130,41 @@ async def check_sheets_job(bot: Bot):
                     try:
                         logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
 
-                        # Check DB — if order already SENT or later, mark sheet and skip
+                        # Check DB — if this order ID was used before, decide what to do:
+                        #  - old order is FINISHED/CANCELLED  -> ID was just recycled by the
+                        #    sheet; archive the old row (frees the unique order_id) and
+                        #    proceed to send this as a brand-new order, with a warning note.
+                        #  - old order is still ACTIVE          -> a second dispatch under the
+                        #    same ID right now would collide with an in-progress delivery,
+                        #    so keep holding it and warn instead of silently double-sending.
                         db_order = await asyncio.to_thread(get_order, order_id)
                         if db_order and db_order.get('current_status') not in ('NEW', None, ''):
-                            PROCESSED_ORDERS[order_id] = True
                             existing_status = db_order.get('current_status', '?')
-                            logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"⚠️ Bu buyurtma allaqachon bazada bor (holat: {existing_status})", sheet_name
-                            )
-                            continue
+
+                            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI'):
+                                archived_id = await asyncio.to_thread(
+                                    archive_duplicate_order_id, db_order.get('id'), order_id
+                                )
+                                logger.warning(
+                                    f"⚠️ #{order_id} ID avval ishlatilgan (holat: {existing_status}). "
+                                    f"Eski yozuv arxivlandi ({archived_id}); yangi buyurtma sifatida yuborilmoqda."
+                                )
+                                await asyncio.to_thread(
+                                    write_order_result_note, order['row_index'],
+                                    f"⚠️ Diqqat: bu ID avval ham ishlatilgan (holat: {existing_status}). "
+                                    f"Baribir yangi buyurtma sifatida yuborildi.", sheet_name
+                                )
+                                db_order = None  # fall through to create_order below
+                            else:
+                                PROCESSED_ORDERS[order_id] = True
+                                logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
+                                await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
+                                await asyncio.to_thread(
+                                    write_order_result_note, order['row_index'],
+                                    f"⚠️ Diqqat: bu ID hozir faol buyurtmada ishlatilmoqda (holat: {existing_status}). "
+                                    f"Tekshiring — yuborilmadi.", sheet_name
+                                )
+                                continue
 
                         # Create in DB if missing
                         # NOTE: filial is NOT included here — it's saved later via update_order
