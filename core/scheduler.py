@@ -168,7 +168,6 @@ async def check_sheets_job(bot: Bot):
                                 )
                                 db_order = None  # fall through to create_order below
                             else:
-                                PROCESSED_ORDERS[order_id] = True
                                 logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
                                 await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
                                 await asyncio.to_thread(
@@ -176,6 +175,10 @@ async def check_sheets_job(bot: Bot):
                                     f"⚠️ Diqqat: bu ID hozir faol buyurtmada ishlatilmoqda (holat: {existing_status}). "
                                     f"Tekshiring — yuborilmadi.", sheet_name
                                 )
+                                # Only mark processed after the sheet actually reflects it —
+                                # otherwise a failed write (e.g. Sheets 429) would freeze this
+                                # row forever with a stale 'SEND' status and no explanation.
+                                PROCESSED_ORDERS[order_id] = True
                                 continue
 
                         # Create in DB if missing
@@ -195,6 +198,12 @@ async def check_sheets_job(bot: Bot):
                                 db_order = await asyncio.to_thread(get_order, order_id)
                                 if not db_order:
                                     logger.error(f"❌ #{order_id} could not be created in DB. Skipping.")
+                                    await asyncio.to_thread(
+                                        write_order_result_note, order['row_index'],
+                                        "❌ Buyurtmani bazaga yozib bo'lmadi (Supabase xatosi). "
+                                        "Nima qilish kerak: internet/DB holatini tekshiring va statusni "
+                                        "qayta 'SEND' qiling — avtomatik qayta urinib ko'riladi.", sheet_name
+                                    )
                                     PROCESSED_ORDERS[order_id] = True
                                     continue
 
@@ -323,6 +332,18 @@ async def check_sheets_job(bot: Bot):
 
                     except Exception as e:
                         logger.error(f"❌ Error processing #{order_id}: {e}")
+                        # Best-effort: always leave a visible reason on the sheet so a
+                        # stuck 'SEND' row is never silent. Don't mark PROCESSED_ORDERS
+                        # here — an unexpected/transient error (e.g. Sheets 429) should
+                        # be retried on the next cycle, not frozen forever.
+                        try:
+                            await asyncio.to_thread(
+                                write_order_result_note, order['row_index'],
+                                f"❌ Ichki xatolik: {e}. Tizim keyingi tekshiruvda avtomatik qayta "
+                                f"urinadi; bir necha marta takrorlansa, dasturchiga xabar bering.", sheet_name
+                            )
+                        except Exception as note_err:
+                            logger.error(f"❌ Also failed to write fallback note for #{order_id}: {note_err}")
 
         except Exception as e:
             logger.error(f"❌ Critical error in check_sheets_job: {e}")
