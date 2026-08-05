@@ -891,11 +891,15 @@ async def start_reset_all(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data="adm_back")],
     ])
     text = (
-        "⚠️ <b>Diqqat! To'liq reset qilinadi:</b>\n\n"
-        "• Bazadagi barcha yakunlanmagan buyurtmalar <b>ESKI_YOPILDI</b> deb belgilanadi\n"
-        "• Barcha filial sheetlaridagi <b>SEND</b> holatidagi (hali yuborilmagan) qatorlar yopiladi\n"
+        "⚠️ <b>Diqqat! To'liq reset qilinadi — BARCHA bosqichdagi buyurtmalar:</b>\n\n"
+        "• Bazadagi barcha yakunlanmagan buyurtmalar (SEND, SENT, qabul qilingan, "
+        "yo'lda — qaysi bosqichda bo'lishidan qat'i nazar) <b>ESKI_YOPILDI</b> deb belgilanadi\n"
+        "• Barcha filial sheetlaridagi shu holatdagi qatorlar ham yopiladi\n"
         "• Haydovchilar jadvalidagi band/yuklangan statuslar tozalanadi (hammasi <b>BO'SH</b>)\n\n"
-        "Haydovchilarga hech qanday xabar yuborilmaydi (ular hech narsa qabul qilmagan). "
+        "⚠️ Agar biror haydovchi hozir HAQIQATDA yo'lda/yuk tashiyotgan bo'lsa, uning "
+        "buyurtmasi ham yopiladi va unga BUNING haqida alohida xabar YUBORILMAYDI — "
+        "u sizga o'zi murojaat qilmaguncha bilmaysiz. Faqat aniq eskirgan/tiqilib qolgan "
+        "buyurtmalar borligiga ishonchingiz komil bo'lsa davom eting.\n\n"
         "Bu amalni ortga qaytarib bo'lmaydi. Davom etasizmi?"
     )
     try:

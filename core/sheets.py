@@ -467,12 +467,16 @@ def cancel_order_in_sheets(order_id: str) -> bool:
         return False
 
 
-def bulk_close_stuck_orders_in_sheets(target_status='SEND', new_status='ESKI_YOPILDI',
-                                       note_text="⏹ Admin: eski/backlog buyurtma tizim reset qilinganda yopildi."):
+def bulk_close_stuck_orders_in_sheets(new_status='ESKI_YOPILDI',
+                                       note_text="⏹ Admin: eski/backlog buyurtma tizim reset qilinganda yopildi.",
+                                       skip_statuses=('YAKUNLANDI', 'BEKOR_QILINDI', 'ESKI_YOPILDI')):
     """
-    Full-reset action, sheet side: close every row whose status still equals
-    target_status (default 'SEND' — i.e. never got processed, the ones piling
-    up and causing the backlog) across every branch orders sheet.
+    Full-reset action, sheet side: close EVERY row that isn't already in a
+    terminal status (skip_statuses) — regardless of which stage it's
+    currently sitting at (SEND, SENT, QABUL_QILINDI, YOLDA, TRANSIT,
+    XAYDOVCHI_BAND, TELEGRAM_XATOSI, or anything else) — across every
+    branch orders sheet. Blank status cells (no order in that row at all)
+    are left untouched.
 
     Uses ONE read + ONE batch_update per sheet instead of a per-row API call,
     since a per-row worksheet.find() loop over a large backlog would itself
@@ -484,6 +488,7 @@ def bulk_close_stuck_orders_in_sheets(target_status='SEND', new_status='ESKI_YOP
     if not client:
         return {}
     results = {}
+    skip_upper = {s.upper() for s in skip_statuses}
     try:
         from core.config import BRANCHES
         sh = client.open_by_key(GOOGLE_SHEET_ID)
@@ -510,10 +515,11 @@ def bulk_close_stuck_orders_in_sheets(target_status='SEND', new_status='ESKI_YOP
                 count = 0
                 for i, row in enumerate(values[1:], start=2):
                     cur = row[status_idx].strip() if len(row) > status_idx else ""
-                    if cur.upper() == target_status.upper():
-                        updates.append({'range': f'{status_col}{i}', 'values': [[new_status]]})
-                        updates.append({'range': f'{note_col}{i}', 'values': [[note_text]]})
-                        count += 1
+                    if not cur or cur.upper() in skip_upper:
+                        continue
+                    updates.append({'range': f'{status_col}{i}', 'values': [[new_status]]})
+                    updates.append({'range': f'{note_col}{i}', 'values': [[note_text]]})
+                    count += 1
                 if updates:
                     ws.batch_update(updates)
                     logger.info(f"[SHEETS] bulk_close: {count} rows -> {new_status} in '{sheet_name}'")
