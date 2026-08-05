@@ -11,6 +11,8 @@ from core.sheets import (
 )
 from core.db import create_order, get_order, update_order
 import core.keyboards as kb
+from core.utils import normalize_car_number
+from core.config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,29 @@ def _get_group_id_for_filial(filial: str) -> str:
         gid = BRANCHES[filial].get('group_id')
         return gid or GROUP_CHAT_ID
     return GROUP_CHAT_ID
+
+
+async def _notify_admins_tg_failure(bot: Bot, order_id, driver, car_number, tg_err):
+    """Ping admins in Telegram when a driver message fails to send
+    (e.g. driver blocked the bot), so someone reacts immediately
+    instead of only finding out later from the spreadsheet."""
+    if not ADMIN_IDS:
+        return
+    driver_name = driver.get('driver_name', '-') if driver else '-'
+    text = (
+        f"🚨 *Diqqat! Haydovchiga yuborib bo'lmadi*\n\n"
+        f"🆔 Buyurtma: #{order_id}\n"
+        f"🚗 Mashina: {car_number}\n"
+        f"👤 Haydovchi: {driver_name}\n"
+        f"⚠️ Xato: {tg_err}\n\n"
+        f"Haydovchi botni bloklagan bo'lishi mumkin — u bilan bog'laning "
+        f"yoki buyurtmani boshqa haydovchiga qo'lda biriktiring."
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(chat_id=admin_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"❌ Failed to notify admin {admin_id}: {e}")
 
 
 # ─── 1. Check all branches for new orders ────────────────────────────────────
@@ -124,7 +149,7 @@ async def check_sheets_job(bot: Bot):
                         if not db_order:
                             ok = await asyncio.to_thread(create_order, {
                                 'order_id':       order_id,
-                                'car_number':     order['car_number'].strip().upper(),
+                                'car_number':     normalize_car_number(order['car_number']),
                                 'address':        order['address'],
                                 'cargo':          order['cargo'],
                                 'comment':        order['comment'],
@@ -138,7 +163,7 @@ async def check_sheets_job(bot: Bot):
                                     PROCESSED_ORDERS[order_id] = True
                                     continue
 
-                        car_number = order['car_number'].strip().upper()
+                        car_number = normalize_car_number(order['car_number'])
                         driver = drivers.get(car_number)
 
                         if not driver:
@@ -219,6 +244,7 @@ async def check_sheets_job(bot: Bot):
                                 write_order_result_note, order['row_index'],
                                 f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err})", sheet_name
                             )
+                            await _notify_admins_tg_failure(bot, order_id, driver, car_number, tg_err)
                             PROCESSED_ORDERS[order_id] = True
                             continue
 

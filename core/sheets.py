@@ -5,6 +5,7 @@ import time
 import gspread
 from google.oauth2.service_account import Credentials
 from core.config import GOOGLE_SHEET_ID, ORDERS_SHEET_NAME, DRIVERS_SHEET_NAME
+from core.utils import normalize_car_number
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ def get_new_orders(sheet_name=None):
                 new_orders.append({
                     'row_index':  i,
                     'order_id':   order_id,
-                    'car_number': row[car_idx].strip().upper() if car_idx >= 0 and len(row) > car_idx else "",
+                    'car_number': normalize_car_number(row[car_idx]) if car_idx >= 0 and len(row) > car_idx else "",
                     'address':    row[addr_idx] if addr_idx >= 0 and len(row) > addr_idx else "-",
                     'cargo':      row[cargo_idx] if cargo_idx >= 0 and len(row) > cargo_idx else "",
                     'comment':    row[comment_idx] if comment_idx >= 0 and len(row) > comment_idx else "",
@@ -145,7 +146,7 @@ def get_drivers():
         for row in values[1:]:
             if len(row) < 3:
                 continue
-            car_raw = str(row[0]).strip().upper()
+            car_raw = normalize_car_number(row[0])
             if not car_raw:
                 continue
             # filial ustuni (D) endi ishlatilmaydi — order qaysi sheetda
@@ -314,7 +315,7 @@ def update_driver_status_sheet(car_number, status, order_id=""):
         def _do():
             sh = client.open_by_key(GOOGLE_SHEET_ID)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
-            cell = worksheet.find(str(car_number).strip().upper(), in_column=1)
+            cell = worksheet.find(normalize_car_number(car_number), in_column=1)
             if not cell:
                 logger.warning(f"[DRIVER_SHEET] '{car_number}' NOT FOUND.")
                 return False
@@ -368,7 +369,7 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
         def _do():
             sh = client.open_by_key(GOOGLE_SHEET_ID)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
-            cell = worksheet.find(str(car_number).strip().upper(), in_column=1)
+            cell = worksheet.find(normalize_car_number(car_number), in_column=1)
             if not cell:
                 return False
 
@@ -481,7 +482,7 @@ def get_drivers_status_list():
             if not r:
                 continue
             result.append({
-                'car_number':  r[0].strip().upper(),
+                'car_number':  normalize_car_number(r[0]),
                 'driver_name': r[1] if len(r) > 1 else "",
                 'status':      r[3] if len(r) > 3 else "BO'SH",
                 'order_id':    r[4] if len(r) > 4 else "",
@@ -518,7 +519,7 @@ def get_all_cars_list():
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
         values = _retry(_read)
-        return sorted(list(set([r[0].strip().upper() for r in values[1:] if r and r[0]])))
+        return sorted(list(set([normalize_car_number(r[0]) for r in values[1:] if r and r[0]])))
     except Exception as e:
         logger.error(f"Error get_all_cars_list: {e}")
         return []

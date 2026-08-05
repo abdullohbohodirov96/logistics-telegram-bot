@@ -1,8 +1,28 @@
+import re
 import pytz
 from datetime import datetime
 from core.config import TIMEZONE
 
 tz = pytz.timezone(TIMEZONE)
+
+def normalize_car_number(value):
+    """
+    Normalize a car plate number for reliable matching between the
+    orders sheet and the drivers sheet.
+
+    Handles inconsistent spacing/dashes that operators type by hand,
+    e.g. "01 655 OLA", "01655OLA", "01-655-OLA" and "01 655OLA" must
+    all resolve to the same key so a driver lookup never fails just
+    because of whitespace formatting differences.
+    """
+    if not value:
+        return ""
+    # Uppercase first (handles Cyrillic/Latin casing too), then strip
+    # every whitespace and dash character so only the meaningful
+    # alphanumeric plate characters remain.
+    cleaned = str(value).strip().upper()
+    cleaned = re.sub(r"[\s\-]+", "", cleaned)
+    return cleaned
 
 def get_now():
     return datetime.now(tz)
