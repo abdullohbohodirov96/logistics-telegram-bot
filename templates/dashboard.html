@@ -111,9 +111,43 @@
         .ui-s { font-size: clamp(9px, .75vw, 12px); color: #666; margin-top: 1px; }
         .emp { color: #444; text-align: center; padding: 28px 0; font-size: 14px; }
 
+        /* 3-column live board */
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        .col { background: #202020; border-radius: 12px; padding: 12px; min-height: 120px; }
+        .col-h {
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: clamp(13px, 1.1vw, 18px); font-weight: 800;
+            padding-bottom: 8px; margin-bottom: 8px; border-bottom: 2px solid #333;
+        }
+        .col-cnt {
+            font-size: clamp(12px, 1vw, 16px); font-weight: 900;
+            padding: 2px 10px; border-radius: 20px; background: #333;
+        }
+        .col-bosh .col-h { color: #28a745; }
+        .col-bosh .col-cnt { background: #28a74522; color: #28a745; }
+        .col-yuk .col-h { color: #ffc107; }
+        .col-yuk .col-cnt { background: #ffc10722; color: #ffc107; }
+        .col-yolda .col-h { color: #007bff; }
+        .col-yolda .col-cnt { background: #007bff22; color: #007bff; }
+        .col-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow-y: auto; }
+        .col-list::-webkit-scrollbar { width: 4px; }
+        .col-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .row-c {
+            background: #262626; border-radius: 8px; padding: 8px 10px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .row-cn { font-weight: 900; font-size: clamp(13px, 1.1vw, 18px); letter-spacing: .5px; }
+        .row-dn { font-size: clamp(10px, .85vw, 13px); color: #999; }
+        .row-o { font-size: clamp(10px, .85vw, 13px); color: #777; font-weight: 700; }
+
         @media (max-width: 1100px) {
             .sts { grid-template-columns: repeat(2, 1fr); }
             .main { grid-template-columns: 1fr; }
+            .board { grid-template-columns: 1fr; }
         }
         @media (max-width: 600px) {
             .sts { grid-template-columns: 1fr; }
@@ -159,24 +193,43 @@
 
     <div class="main">
         <div class="pnl">
-            <div class="pnl-t">🚗 Mashinalar holati</div>
-            <div class="cg">
-                {% for d in drivers %}
-                    {% set cls = 'cc-free' if d.status == "BO'SH" else 'cc-busy' %}
-                    <div class="cc {{ cls }}">
-                        <div>
-                            <div class="cc-n">{{ d.car_number }}</div>
-                            <div class="cc-d">{{ d.driver_name }}</div>
+            <div class="pnl-t">🚗 Mashinalar holati (jonli)</div>
+            <div class="board">
+                <div class="col col-bosh">
+                    <div class="col-h"><span>🟢 Bo'sh</span><span class="col-cnt">{{ board.BOSH|length }}</span></div>
+                    <div class="col-list">
+                        {% for d in board.BOSH %}
+                        <div class="row-c">
+                            <div><div class="row-cn">{{ d.car_number }}</div><div class="row-dn">{{ d.driver_name }}</div></div>
                         </div>
-                        <div class="cc-b">
-                            <div class="bdg">{{ d.raw_status }}</div>
-                            {% if d.current_order_id %}<div class="cc-o">#{{ d.current_order_id }}</div>{% endif %}
-                        </div>
+                        {% endfor %}
+                        {% if not board.BOSH %}<div class="emp">Yo'q</div>{% endif %}
                     </div>
-                {% endfor %}
-                {% if not drivers %}
-                    <div class="emp">Mashinalar topilmadi</div>
-                {% endif %}
+                </div>
+                <div class="col col-yuk">
+                    <div class="col-h"><span>🟡 Yuk ortyapti</span><span class="col-cnt">{{ board.YUK_ORTYAPTI|length }}</span></div>
+                    <div class="col-list">
+                        {% for d in board.YUK_ORTYAPTI %}
+                        <div class="row-c">
+                            <div><div class="row-cn">{{ d.car_number }}</div><div class="row-dn">{{ d.driver_name }}</div></div>
+                            {% if d.current_order_id %}<div class="row-o">#{{ d.current_order_id }}</div>{% endif %}
+                        </div>
+                        {% endfor %}
+                        {% if not board.YUK_ORTYAPTI %}<div class="emp">Yo'q</div>{% endif %}
+                    </div>
+                </div>
+                <div class="col col-yolda">
+                    <div class="col-h"><span>🔵 Yo'lda</span><span class="col-cnt">{{ board.YOLDA|length }}</span></div>
+                    <div class="col-list">
+                        {% for d in board.YOLDA %}
+                        <div class="row-c">
+                            <div><div class="row-cn">{{ d.car_number }}</div><div class="row-dn">{{ d.driver_name }}</div></div>
+                            {% if d.current_order_id %}<div class="row-o">#{{ d.current_order_id }}</div>{% endif %}
+                        </div>
+                        {% endfor %}
+                        {% if not board.YOLDA %}<div class="emp">Yo'q</div>{% endif %}
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -205,7 +258,7 @@
                 ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
         }
         setInterval(tick,1000); tick();
-        setTimeout(function(){location.reload()},10000);
+        setTimeout(function(){location.reload()},8000);
     </script>
 </body>
 </html>

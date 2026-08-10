@@ -111,32 +111,46 @@ def sheets_read_cars() -> list:
         
         headers = [h.strip().lower() for h in data[0]]
         rows = data[1:]
-        
-        try:
-            idx_car = headers.index('car_number')
-            idx_name = headers.index('driver_name')
-            idx_status = headers.index('status')
-            idx_order = headers.index('current_order_id')
-        except ValueError as e:
-            logger.error(f"DRIVERS header missing in dashboard: {e}")
-            return []
-            
+
+        def _find(names):
+            for n in names:
+                if n in headers:
+                    return headers.index(n)
+            return -1
+
+        # Fuzzy + positional fallback: the drivers sheet is A=car_number,
+        # B=driver_name, C=telegram_id, D=status, E=current_order_id, so if
+        # the header row doesn't literally say these words, fall back to
+        # column position instead of returning nothing.
+        idx_car    = _find(['car_number', 'car', 'mashina'])
+        idx_name   = _find(['driver_name', 'name', 'haydovchi'])
+        idx_tid    = _find(['telegram_id', 'tg_id', 'telegramid'])
+        idx_status = _find(['status', 'holat'])
+        idx_order  = _find(['current_order_id', 'order_id', 'orders'])
+        if idx_car == -1:    idx_car = 0
+        if idx_name == -1:   idx_name = 1
+        if idx_tid == -1:    idx_tid = 2
+        if idx_status == -1: idx_status = 3
+        if idx_order == -1:  idx_order = 4
+
         cars = []
         for row in rows:
             if len(row) <= max(idx_car, idx_name, idx_status):
                 continue
-            
+
             cn = row[idx_car].strip()
             dn = row[idx_name].strip()
             if not cn: continue
-            
+
+            tid = row[idx_tid].strip() if len(row) > idx_tid else ""
             raw_status = row[idx_status].strip().upper() if len(row) > idx_status else ""
-            status = "BAND" if raw_status in ("BAND", "YUK ORTYAPTI", "YO'LDA", "YETIB BORDI") else "BO'SH"
+            status = "BAND" if raw_status in ("BAND", "YUK ORTYAPTI", "YUK OGAN", "YO'LDA", "YETIB BORDI") else "BO'SH"
             order_id = row[idx_order].strip() if len(row) > idx_order else ""
-            
+
             cars.append({
                 "car_number": cn,
                 "driver_name": dn,
+                "telegram_id": tid,
                 "status": status,
                 "raw_status": raw_status or "BO'SH",
                 "current_order_id": order_id,
@@ -180,6 +194,46 @@ def _sb_rows(table, params) -> list:
     except:
         return []
 
+def get_driver_live_stages() -> dict:
+    """
+    Returns {telegram_id(str): stage} for every driver with an active order,
+    where stage is 'YUK_ORTYAPTI' (accepted, still loading/prepping — the
+    order hasn't left yet) or 'YOLDA' (driver tapped "Yo'lga chiqdim" and is
+    actually en route). Drivers with no active order simply have no entry
+    here, i.e. they're free (BO'SH).
+
+    The Drivers Google Sheet only ever stores two coarse states (BO'SH /
+    YUK OGAN) — it's never updated when a driver actually departs. The real,
+    live per-order stage lives in Supabase (current_status), so that's the
+    source of truth for this 3-way split. Cached 8 seconds.
+    """
+    cached = _cached("live_stages", ttl=8)
+    if cached is not None:
+        return cached
+
+    rows = _sb_rows("orders", {
+        "select": "driver_telegram_id,current_status",
+        "current_status": "not.in.(YAKUNLANDI,BEKOR_QILINDI,ESKI_YOPILDI,NEW)",
+    })
+
+    # Stage priority if a driver somehow has more than one active order —
+    # 'on the way' wins over 'still loading', so the board shows the more
+    # advanced (more informative) state.
+    priority = {"YOLDA": 2, "YUK_ORTYAPTI": 1}
+    stages = {}
+    for r in rows:
+        tid = str(r.get('driver_telegram_id') or '').strip()
+        if not tid:
+            continue
+        raw = (r.get('current_status') or '').strip().upper()
+        stage = "YOLDA" if raw == "YOLDA" else "YUK_ORTYAPTI"
+        if tid not in stages or priority[stage] > priority[stages[tid]]:
+            stages[tid] = stage
+
+    _set("live_stages", stages)
+    return stages
+
+
 def get_supabase_stats() -> dict:
     """Get today finished count + recent updates from Supabase. Cached 10s."""
     cached = _cached("sb_stats", ttl=10)
@@ -218,14 +272,29 @@ def get_supabase_stats() -> dict:
 async def dashboard(request: Request):
     cars = sheets_read_cars()
     sb = get_supabase_stats()
+    live_stages = get_driver_live_stages()
+
+    # 3-way live board: Bo'sh / Yuk ortyapti / Yo'lda — driven by Supabase's
+    # real per-order status (live_stages), not the sheet's coarse 2-state
+    # column, so "Yo'lda" is actually accurate.
+    board = {"BOSH": [], "YUK_ORTYAPTI": [], "YOLDA": []}
+    for car in cars:
+        stage = live_stages.get(car["telegram_id"], "") if car.get("telegram_id") else ""
+        if stage == "YOLDA":
+            board["YOLDA"].append(car)
+        elif stage == "YUK_ORTYAPTI":
+            board["YUK_ORTYAPTI"].append(car)
+        else:
+            board["BOSH"].append(car)
 
     total = len(cars)
-    free = sum(1 for c in cars if c["status"] == "BO'SH")
+    free = len(board["BOSH"])
     busy = total - free
 
     return templates.TemplateResponse(
         request=request, name="dashboard.html", context={
             "drivers": cars,
+            "board": board,
             "total": total,
             "free": free,
             "busy": busy,
@@ -248,6 +317,7 @@ def debug():
     return {
         "total_cars": len(cars),
         "cars": cars,
+        "live_stages": get_driver_live_stages(),
         "sheet_id": GOOGLE_SHEET_ID[:8] + "..." if GOOGLE_SHEET_ID else "MISSING",
         "creds": "SET" if _sa_info.get("client_email") else "MISSING",
     }
