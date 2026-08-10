@@ -51,6 +51,15 @@ SHOP_LNG = 69.231954
 # is a ceiling in case the ETA estimate undershoots reality.
 RETURN_TO_SHOP_MAX_MINUTES = 90
 
+# A car sitting idle (Bo'sh) for longer than this without getting a new
+# order is treated as off-duty for the day (driver finished their shift,
+# etc) — dispatcher asked for these to disappear from the board entirely
+# instead of cluttering the Bo'sh list with cars nobody's going to dispatch
+# today. The moment such a car gets a new order, it naturally reappears
+# (it routes into Yuk ortyapti/Yo'lda, which never runs through this
+# filter at all).
+REST_IDLE_THRESHOLD_MINUTES = 1400
+
 # ── Wialon Local (live GPS) ────────────────────────────────────────────────
 # Optional — without these two set, every car simply has no rayon shown
 # (board still works fine, same as before this feature existed).
@@ -908,7 +917,16 @@ async def dashboard(request: Request):
     # probably the one dispatchers want to use next, so surface it first.
     board["BOSH"].sort(key=lambda c: c.get("idle_minutes") if c.get("idle_minutes") is not None else -1, reverse=True)
 
-    total = len(cars)
+    # Cars idle for 1400+ minutes (~23+ hours) are dropped from the board
+    # entirely — not shown as Bo'sh, not counted in the totals — since
+    # they're effectively off-duty, not really "available right now".
+    resting_count = sum(1 for c in board["BOSH"] if (c.get("idle_minutes") or 0) > REST_IDLE_THRESHOLD_MINUTES)
+    board["BOSH"] = [
+        c for c in board["BOSH"]
+        if (c.get("idle_minutes") or 0) <= REST_IDLE_THRESHOLD_MINUTES
+    ]
+
+    total = len(cars) - resting_count
     free = len(board["BOSH"])
     busy = total - free
 
