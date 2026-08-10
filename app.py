@@ -539,12 +539,25 @@ _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
 
 def get_rayon(lat, lng):
     """
-    Coordinate -> rayon (district) name via Yandex Geocoder — same idea as
+    Coordinate -> "Rayon, Ko'cha nomi" via Yandex Geocoder — same idea as
     core/geocoding.py on the bot side, duplicated here since this dashboard
-    is self-contained. Cached by a coarse ~1.1km grid cell (rounding to 2
-    decimal places) for 10 minutes: a car doesn't change rayon every few
-    meters, and the dashboard reloads every 8 seconds, so without this a
-    single busy board could burn through the Yandex free quota in minutes.
+    is self-contained (that one intentionally returns just the rayon for a
+    short Telegram notification; this one is for the dashboard, where the
+    dispatcher explicitly asked for both the district AND the main street,
+    not a bare city name like "Toshkent").
+
+    Yandex's address hierarchy has two different tags for "district" —
+    "area" (a rural/regional tuman) and "district" (a city sub-district,
+    e.g. Yunusobod, Chilonzor) — a given point only ever has one of them,
+    so both are checked. If neither is present (sparse map data at that
+    exact point), falls back to the street alone, or the bare locality
+    (city) only as an absolute last resort, so we're never returning
+    something less specific than what's actually available.
+
+    Cached by a coarse ~1.1km grid cell (rounding to 2 decimal places) for
+    10 minutes: a car doesn't change rayon every few meters, and the
+    dashboard reloads every 8 seconds, so without this a single busy board
+    could burn through the Yandex free quota in minutes.
     """
     if not YANDEX_GEOCODER_API_KEY or lat is None or lng is None:
         return None
@@ -567,6 +580,7 @@ def get_rayon(lat, lng):
                 "geocode": f"{lng},{lat}",
                 "format": "json",
                 "lang": "uz_UZ",
+                "kind": "house",
                 "results": 1,
             },
             timeout=6,
@@ -582,7 +596,13 @@ def get_rayon(lat, lng):
                 meta = members[0]["GeoObject"].get("metaDataProperty", {}).get("GeocoderMetaData", {})
                 components = meta.get("Address", {}).get("Components", [])
                 by_kind = {c.get("kind"): c.get("name") for c in components if c.get("kind") and c.get("name")}
-                rayon = by_kind.get("area") or by_kind.get("district") or by_kind.get("locality")
+
+                district = by_kind.get("area") or by_kind.get("district")
+                street = by_kind.get("street")
+                locality = by_kind.get("locality")
+
+                parts = [p for p in (district or locality, street) if p]
+                rayon = ", ".join(parts) if parts else None
     except Exception as e:
         logger.warning(f"[rayon] geocode failed for ({lat},{lng}): {e}")
 
