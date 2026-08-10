@@ -392,12 +392,22 @@ async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot:
 async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
     data = await state.get_data()
-    order_id = data.get('order_id')
+    # order_id is already embedded in the button itself ("tr_oldi_<id>" /
+    # "tr_olmadi_<id>") — prefer that over FSM state, which is in-memory
+    # only and gets wiped on every restart/deploy. Falling back to state
+    # first was the bug behind "no order_id in state" errors whenever a
+    # driver tapped this mid-flow across a redeploy.
+    order_id = callback.data.split("_", 2)[2] if callback.data.count("_") >= 2 else data.get('order_id')
     if not order_id:
-        logger.error("Transit action received but no order_id in state.")
+        logger.error("Transit action received but no order_id in state or callback_data.")
         await callback.message.answer("❌ Xatolik, qayta urinib ko'ring")
         return
-    
+    if not data.get('order_id'):
+        # State was lost (redeploy, etc) but we recovered order_id from the
+        # button — reseed minimal state so the rest of this flow works.
+        await state.update_data(order_id=order_id)
+        data = await state.get_data()
+
     logger.info(f"Transit 1 answer received for order {order_id}: {callback.data}")
     now = get_now()
     stage_history = data.get('stage_history') or []

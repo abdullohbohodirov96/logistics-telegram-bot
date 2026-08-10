@@ -130,33 +130,30 @@ async def process_one_order(bot: Bot, branch_name: str, sheet_name: str, group_i
         if db_order and db_order.get('current_status') not in ('NEW', None, ''):
             existing_status = db_order.get('current_status', '?')
 
-            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI', 'ESKI_YOPILDI'):
-                archived_id = await asyncio.to_thread(
-                    archive_duplicate_order_id, db_order.get('id'), order_id
-                )
-                logger.warning(
-                    f"⚠️ #{order_id} ID avval ishlatilgan (holat: {existing_status}). "
-                    f"Eski yozuv arxivlandi ({archived_id}); yangi buyurtma sifatida yuborilmoqda."
-                )
-                await asyncio.to_thread(
-                    write_order_result_note, order['row_index'],
-                    f"⚠️ Diqqat: bu ID avval ham ishlatilgan (holat: {existing_status}). "
-                    f"Baribir yangi buyurtma sifatida yuborildi.", sheet_name
-                )
-                db_order = None  # fall through to create_order below
-            else:
-                logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
-                await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
-                await asyncio.to_thread(
-                    write_order_result_note, order['row_index'],
-                    f"⚠️ Diqqat: bu ID hozir faol buyurtmada ishlatilmoqda (holat: {existing_status}). "
-                    f"Tekshiring — yuborilmadi.", sheet_name
-                )
-                # Only mark processed after the sheet actually reflects it —
-                # otherwise a failed write (e.g. Sheets 429) would freeze this
-                # row forever with a stale 'SEND' status and no explanation.
-                PROCESSED_ORDERS[order_id] = True
-                return
+            # Dispatcher's explicit request: ALWAYS accept a SEND row even if
+            # its order_id collides with an existing order — including one
+            # that's still ACTIVE (mid-delivery), not just finished/cancelled
+            # ones. The old row is archived (renamed order_id, so it keeps its
+            # own history intact) and this SEND is dispatched as a brand-new
+            # order under the now-freed ID. NOTE: if the old order is still
+            # genuinely being delivered by a driver right now, their live
+            # Telegram session still references the original order_id — once
+            # archived, that ID now points at the NEW order, so the driver's
+            # next tap could act on the wrong order. Kept as a warning note in
+            # the sheet so it's visible, but not blocked.
+            archived_id = await asyncio.to_thread(
+                archive_duplicate_order_id, db_order.get('id'), order_id
+            )
+            logger.warning(
+                f"⚠️ #{order_id} ID avval ishlatilgan (holat: {existing_status}). "
+                f"Eski yozuv arxivlandi ({archived_id}); yangi buyurtma sifatida yuborilmoqda."
+            )
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"⚠️ Diqqat: bu ID avval ham ishlatilgan (holat: {existing_status}). "
+                f"Baribir yangi buyurtma sifatida yuborildi.", sheet_name
+            )
+            db_order = None  # fall through to create_order below
 
         # Create in DB if missing
         # NOTE: filial is NOT included here — it's saved later via update_order
