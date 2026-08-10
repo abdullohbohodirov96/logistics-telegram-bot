@@ -643,21 +643,31 @@ _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
 # level) — this is a starting set covering the places mentioned so far.
 # Easy to extend: just add "Name": (lat, lng) below.
 _KNOWN_LOCAL_PLACES = {
-    "Xasanboy":  (41.4150, 69.2950),
-    "Keles":     (41.3982, 69.2054),
-    "Chuqursoy": (41.3764, 69.2405),
-    "Sebzor":    (41.3304, 69.2497),
-    "Chorsu":    (41.3252, 69.2321),
+    "Dunyabunya": (SHOP_LAT, SHOP_LNG),
+    "Xasanboy":   (41.4150, 69.2950),
+    "Keles":      (41.3982, 69.2054),
+    "Chuqursoy":  (41.3764, 69.2405),
+    "Sebzor":     (41.3304, 69.2497),
+    "Chorsu":     (41.3252, 69.2321),
 }
+# Dunyabunya (the shop itself) gets a tighter radius than the other
+# well-known places -- it's a single specific building, not a whole
+# neighborhood, so a car a couple km away should still get its real
+# rayon/street rather than being lumped in as "at the shop".
 _KNOWN_PLACE_RADIUS_KM = 2.2
+_SHOP_PLACE_RADIUS_KM = 0.5
+
+
+def _known_place_radius_km(name: str) -> float:
+    return _SHOP_PLACE_RADIUS_KM if name == "Dunyabunya" else _KNOWN_PLACE_RADIUS_KM
 
 
 def _match_known_local_place(lat, lng):
-    """Nearest _KNOWN_LOCAL_PLACES entry within _KNOWN_PLACE_RADIUS_KM, or None."""
+    """Nearest _KNOWN_LOCAL_PLACES entry within its allowed radius, or None."""
     best_name, best_dist = None, None
     for name, (plat, plng) in _KNOWN_LOCAL_PLACES.items():
         d = _haversine_km(lat, lng, plat, plng)
-        if d <= _KNOWN_PLACE_RADIUS_KM and (best_dist is None or d < best_dist):
+        if d <= _known_place_radius_km(name) and (best_dist is None or d < best_dist):
             best_name, best_dist = name, d
     return best_name
 
@@ -855,7 +865,16 @@ def get_returning_to_shop() -> dict:
         # shown as "returning" for longer than RETURN_TO_SHOP_MAX_MINUTES,
         # even if the distance estimate came out unrealistically large.
         remaining = min(remaining, RETURN_TO_SHOP_MAX_MINUTES)
-        arrival_time = completed_at + timedelta(minutes=eta_total)
+        # Arrival clock time must be derived from the CLAMPED countdown
+        # (now + remaining), not from completed_at + the raw uncapped
+        # eta_total -- when the raw distance estimate came out unrealistic
+        # (many hours), that math could land arrival_time many hours past
+        # midnight, which strftime("%H:%M") then silently wraps into a
+        # nonsense early-morning time like "08:47" while the countdown
+        # right next to it correctly showed a clamped "~90 daq". Both
+        # numbers now come from the same clamped `remaining`, so they can
+        # never disagree again.
+        arrival_time = now + timedelta(minutes=remaining)
         result[tid] = {
             "eta_minutes": remaining,
             "eta_time": arrival_time.strftime("%H:%M"),
