@@ -265,14 +265,28 @@ def _sb_rows(table, params) -> list:
         return []
 
 def _parse_iso(s):
-    """Parse a Supabase timestamptz string into an Asia/Tashkent-aware datetime."""
+    """Parse a Supabase timestamp string into an Asia/Tashkent-aware datetime.
+
+    Every write in this codebase sends an already-Tashkent-local, offset-aware
+    ISO string (e.g. "...T14:50:00+05:00") for timestamptz columns. If the
+    column comes back from PostgREST WITH an offset (normal case — proper
+    UTC, "+00:00"/"Z"), we just convert it to Tashkent as usual.
+
+    But if a column ever comes back with NO offset at all (e.g. it's a plain
+    `timestamp` without timezone, or the client dropped the offset), the raw
+    number is exactly the Tashkent wall-clock time we originally wrote — NOT
+    UTC. Treating it as UTC and converting would incorrectly add another 5
+    hours on top (this was the bug behind delivered-times/ETAs showing
+    5 hours in the future). So a naive value is tagged as Tashkent directly,
+    never re-shifted.
+    """
     if not s:
         return None
     try:
         s2 = str(s).replace('Z', '+00:00')
         dt = datetime.fromisoformat(s2)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=TZ)
         return dt.astimezone(TZ)
     except Exception:
         return None
