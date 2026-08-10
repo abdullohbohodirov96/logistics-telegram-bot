@@ -16,8 +16,8 @@
  * is ignored, so it's safe to leave running permanently.
  */
 
-var WEBHOOK_URL = 'https://YOUR-RENDER-BOT-URL.onrender.com/webhook/sheet-edit';
-var WEBHOOK_SECRET = 'PASTE_THE_SAME_SECRET_YOU_SET_IN_RENDER_HERE';
+var WEBHOOK_URL = 'https://logistics-telegram-bot.onrender.com/webhook/sheet-edit';
+var WEBHOOK_SECRET = 'HyxE7QDma-Guv1tNCt87ER0SXOePdE7z';
 
 function onEditInstallable(e) {
   try {
@@ -25,10 +25,11 @@ function onEditInstallable(e) {
     var sheet = range.getSheet();
     var sheetName = sheet.getName();
 
-    // Only look at edits inside the order sheets you actually dispatch
-    // from. IMPORTANT: replace these with your ACTUAL tab names (check the
-    // tabs at the bottom of the spreadsheet) — these are just placeholders.
-    var WATCHED_SHEETS = ['orders', 'Qorasaroy orders'];
+    // Only look at edits inside the order sheet you actually dispatch from.
+    // Qorasaroy filiali olib tashlangani uchun endi faqat bitta sheet bor.
+    // Agar sizning sheet tab nomi "orders" dan boshqacha bo'lsa (pastdagi
+    // tab nomini tekshiring), shu qatorni o'zgartiring.
+    var WATCHED_SHEETS = ['orders'];
     if (WATCHED_SHEETS.indexOf(sheetName) === -1) return;
 
     var lastCol = sheet.getLastColumn();
