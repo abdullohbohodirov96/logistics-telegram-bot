@@ -12,7 +12,12 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").replace("/rest/v1", "").strip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 
 # Google Sheets Configuration
-GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID")
+# Accept either name — render.yaml's bot service historically documented
+# this as "GOOGLE_SHEET_ID" while the code only ever read "SPREADSHEET_ID",
+# so a service set up by copying render.yaml's key list (instead of
+# deploying it as a Blueprint) would silently have no sheet ID at all.
+# Both names now work no matter which one was actually typed into Render.
+GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID") or os.getenv("GOOGLE_SHEET_ID")
 DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers").strip()
 ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders").strip()
 
