@@ -341,6 +341,46 @@ def get_driver_live_stages() -> dict:
     return stages
 
 
+def get_last_finished_times(telegram_ids: list) -> dict:
+    """
+    For the given telegram_ids (drivers currently showing as free), find
+    each one's most recent YAKUNLANDI order's completed_at, so the board
+    can show "bo'sh bo'lganiga X daqiqa" instead of just a bare "Bo'sh".
+
+    One bulk query (driver_telegram_id in (...) + order by completed_at
+    desc), not one query per driver. Cached 15 seconds per exact set of
+    ids requested (fine here — the free-car list only changes when
+    someone's status changes, which already busts other caches too).
+    """
+    ids = sorted({str(t) for t in telegram_ids if t})
+    if not ids:
+        return {}
+    cache_key = "last_finished:" + ",".join(ids)
+    cached = _cached(cache_key, ttl=15)
+    if cached is not None:
+        return cached
+
+    rows = _sb_rows("orders", {
+        "select": "driver_telegram_id,completed_at",
+        "driver_telegram_id": f"in.({','.join(ids)})",
+        "current_status": "eq.YAKUNLANDI",
+        "order": "completed_at.desc",
+        "limit": str(len(ids) * 5),
+    })
+
+    result = {}
+    for r in rows:
+        tid = str(r.get('driver_telegram_id') or '')
+        if not tid or tid in result:
+            continue  # first hit per driver is the most recent (already sorted desc)
+        dt = _parse_iso(r.get('completed_at'))
+        if dt:
+            result[tid] = dt
+
+    _set(cache_key, result)
+    return result
+
+
 def get_supabase_stats() -> dict:
     """
     Get today's finished count + the actual list of today's deliveries
@@ -409,6 +449,23 @@ async def dashboard(request: Request):
     _no_eta = 10 ** 9
     for key in ("YUK_ORTYAPTI", "YOLDA"):
         board[key].sort(key=lambda c: c.get("eta_minutes") if c.get("eta_minutes") is not None else _no_eta)
+
+    # How long has each free car actually been free? Pulled from their
+    # last finished (YAKUNLANDI) order's completed_at.
+    now = datetime.now(TZ)
+    free_tids = [c["telegram_id"] for c in board["BOSH"] if c.get("telegram_id")]
+    last_finished = get_last_finished_times(free_tids)
+    for car in board["BOSH"]:
+        finished_at = last_finished.get(car.get("telegram_id"))
+        if finished_at:
+            car["idle_minutes"] = int((now - finished_at).total_seconds() / 60)
+            car["idle_since"] = finished_at.strftime("%H:%M")
+        else:
+            car["idle_minutes"] = None
+            car["idle_since"] = None
+    # Longest-idle-first — the car that's been sitting free the longest is
+    # probably the one dispatchers want to use next, so surface it first.
+    board["BOSH"].sort(key=lambda c: c.get("idle_minutes") if c.get("idle_minutes") is not None else -1, reverse=True)
 
     total = len(cars)
     free = len(board["BOSH"])
