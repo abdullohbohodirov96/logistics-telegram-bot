@@ -536,6 +536,54 @@ def get_wialon_positions() -> dict:
 
 _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
 
+# Yandex's address data for Uzbekistan doesn't reliably tag a "district"
+# component for every point inside Tashkent city — central streets like
+# Amir Temur or Bobur often come back with only the bare city name
+# ("Toshkent"), no tuman. As a fallback for exactly that case, this is an
+# approximate center point for each of Tashkent city's 12 administrative
+# districts (tumans) — when Yandex gives us a street but no district, we
+# pick whichever of these 12 points is closest and use its name instead of
+# showing nothing more specific than "Toshkent".
+#
+# These are approximate reference points (mostly sourced from Tashkent
+# Metro station coordinates that sit inside the named district, per
+# Wikipedia), NOT precise administrative boundaries — a car very close to
+# a border between two districts could occasionally get attributed to the
+# neighboring one. If a specific car is consistently shown in the wrong
+# tuman, that's a sign this particular point needs nudging — tell me the
+# car and the correct tuman and this table gets adjusted.
+_TASHKENT_DISTRICTS = {
+    "Yunusobod tumani":     (41.3714, 69.2794),
+    "Mirzo Ulugbek tumani": (41.3294, 69.3475),
+    "Chilonzor tumani":     (41.2722, 69.2017),
+    "Yangihayot tumani":    (41.1833, 69.2167),
+    "Bektemir tumani":      (41.2097, 69.3342),
+    "Olmazor tumani":       (41.2556, 69.1960),
+    "Shayxontohur tumani":  (41.3252, 69.2321),
+    "Yashnobod tumani":     (41.2976, 69.3499),
+    "Mirobod tumani":       (41.2950, 69.2750),
+    "Yakkasaroy tumani":    (41.3050, 69.2653),
+    "Sergeli tumani":       (41.2100, 69.2500),
+    "Uchtepa tumani":       (41.2850, 69.1750),
+}
+
+# Rough bounding box around Tashkent CITY only — the nearest-district
+# fallback should never fire for a car out in the region (Toshkent
+# viloyati), where "nearest city tuman" would just be wrong.
+_TASHKENT_CITY_BBOX = (41.15, 41.42, 69.05, 69.42)  # (min_lat, max_lat, min_lng, max_lng)
+
+
+def _nearest_tashkent_district(lat, lng):
+    min_lat, max_lat, min_lng, max_lng = _TASHKENT_CITY_BBOX
+    if not (min_lat <= lat <= max_lat and min_lng <= lng <= max_lng):
+        return None
+    best_name, best_dist = None, None
+    for name, (dlat, dlng) in _TASHKENT_DISTRICTS.items():
+        d = _haversine_km(lat, lng, dlat, dlng)
+        if best_dist is None or d < best_dist:
+            best_name, best_dist = name, d
+    return best_name
+
 
 def get_rayon(lat, lng):
     """
@@ -601,6 +649,13 @@ def get_rayon(lat, lng):
                 street = by_kind.get("street")
                 locality = by_kind.get("locality")
 
+                if not district:
+                    # Yandex didn't tag a district for this exact point —
+                    # fall back to whichever of Tashkent's 12 city tumans is
+                    # geographically closest, instead of just showing the
+                    # bare city name.
+                    district = _nearest_tashkent_district(lat, lng)
+
                 parts = [p for p in (district or locality, street) if p]
                 rayon = ", ".join(parts) if parts else None
     except Exception as e:
@@ -650,9 +705,24 @@ def get_returning_to_shop() -> dict:
         if not completed_at or not eta_total:
             continue
         elapsed = int((now - completed_at).total_seconds() / 60)
+        if elapsed < 0:
+            # completed_at reads as being in the FUTURE relative to now —
+            # bad/anomalous data (bad clock, bad write, etc), not a real
+            # "just finished" order. Skip it rather than let a negative
+            # elapsed blow up the countdown into something absurd like
+            # "~19646 daq" (this was a real bug seen in production).
+            logger.warning(
+                f"[returning_to_shop] order #{r.get('order_id')} has completed_at "
+                f"{completed_at.isoformat()} in the future vs now — skipping."
+            )
+            continue
         remaining = eta_total - elapsed
         if remaining <= 0:
             continue
+        # Hard ceiling regardless of the estimate — a car is never actually
+        # shown as "returning" for longer than RETURN_TO_SHOP_MAX_MINUTES,
+        # even if the distance estimate came out unrealistically large.
+        remaining = min(remaining, RETURN_TO_SHOP_MAX_MINUTES)
         arrival_time = completed_at + timedelta(minutes=eta_total)
         result[tid] = {
             "eta_minutes": remaining,
@@ -825,7 +895,11 @@ async def dashboard(request: Request):
     for car in board["BOSH"]:
         finished_at = last_finished.get(car.get("telegram_id"))
         if finished_at:
-            car["idle_minutes"] = int((now - finished_at).total_seconds() / 60)
+            # Clamp at 0 — if the underlying data ever puts finished_at in
+            # the future (bad completed_at, clock skew, etc), a car can't
+            # actually be idle for negative time, so just show "just freed
+            # up" instead of a nonsensical negative countdown.
+            car["idle_minutes"] = max(0, int((now - finished_at).total_seconds() / 60))
             car["idle_since"] = finished_at.strftime("%H:%M")
         else:
             car["idle_minutes"] = None
