@@ -66,7 +66,7 @@
         /* Main */
         .main {
             display: grid;
-            grid-template-columns: 3fr 1fr;
+            grid-template-columns: 1fr;
             gap: 14px;
             padding: 0 28px 20px;
         }
@@ -102,15 +102,6 @@
         .cc-free { border-color: #28a745; } .cc-free .bdg { background: #28a745; }
         .cc-busy { border-color: #ffc107; } .cc-busy .bdg { background: #ffc107; color: #000; }
 
-        /* Updates */
-        .ul { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow-y: auto; }
-        .ul::-webkit-scrollbar { width: 4px; }
-        .ul::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        .ui { background: #242424; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #555; }
-        .ui-id { font-weight: 700; font-size: clamp(11px, .95vw, 15px); color: #e97609; }
-        .ui-c { font-size: clamp(10px, .85vw, 13px); color: #bbb; margin-top: 2px; }
-        .ui-a { font-size: clamp(9px, .75vw, 12px); color: #777; margin-top: 1px; }
-        .ui-s { font-size: clamp(9px, .75vw, 12px); color: #666; margin-top: 1px; }
         .emp { color: #444; text-align: center; padding: 28px 0; font-size: 14px; }
 
         /* 3-column live board */
@@ -261,22 +252,6 @@
             </div>
         </div>
 
-        <div class="pnl">
-            <div class="pnl-t">⏱ Oxirgi yangilanishlar</div>
-            <div class="ul">
-                {% for u in stats.updates %}
-                <div class="ui">
-                    <div class="ui-id">#{{ u.order_id }}</div>
-                    <div class="ui-c">🚗 {{ u.car_number }} · {{ u.driver_name }}</div>
-                    {% if u.address %}<div class="ui-a">📍 {{ u.address }}</div>{% endif %}
-                    <div class="ui-s">{{ u.current_status }}</div>
-                </div>
-                {% endfor %}
-                {% if not stats.updates %}
-                    <div class="emp">Hozircha ma'lumot yo'q</div>
-                {% endif %}
-            </div>
-        </div>
     </div>
 
     <script>

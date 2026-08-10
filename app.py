@@ -273,7 +273,7 @@ def get_driver_live_stages() -> dict:
 
 
 def get_supabase_stats() -> dict:
-    """Get today finished count + recent updates from Supabase. Cached 10s."""
+    """Get today's finished + failed counts from Supabase. Cached 10s."""
     cached = _cached("sb_stats", ttl=10)
     if cached is not None:
         return cached
@@ -290,16 +290,9 @@ def get_supabase_stats() -> dict:
         "current_status": "in.(ERROR_BOT_BLOCKED,ERROR_DRIVER_NOT_FOUND)",
     })
 
-    updates = _sb_rows("orders", {
-        "select": "order_id,car_number,current_status,driver_name,address",
-        "order": "created_at.desc",
-        "limit": "20",
-    })
-
     result = {
         "finished_today": finished_today,
         "failed": failed,
-        "updates": updates,
     }
     _set("sb_stats", result)
     return result
@@ -347,7 +340,6 @@ async def dashboard(request: Request):
                 "finished_today": sb["finished_today"],
                 "active": busy,
                 "failed": sb["failed"],
-                "updates": sb["updates"],
             }
         }
     )
