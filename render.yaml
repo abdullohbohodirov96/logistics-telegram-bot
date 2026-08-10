@@ -44,5 +44,14 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      # Without these three, sheets_read_cars() has no way to authenticate
+      # to Google and the board silently shows "Mashinalar topilmadi" —
+      # use the SAME values as the logistics-bot service above.
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: DRIVERS_SHEET_NAME
+        value: "drivers"
       - key: PYTHON_VERSION
         value: "3.11.9"
