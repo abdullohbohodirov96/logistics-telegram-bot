@@ -249,7 +249,7 @@
                     <div class="col-list">
                         {% for d in board.BOSH %}
                         <div class="row-c" data-car="{{ d.car_number|upper }}" data-type="{{ (d.vehicle_type or '')|upper }}">
-                            <div><div class="row-cn">{{ d.car_number }}</div>{% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}<div class="row-dn">{{ d.driver_name }}</div>{% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}</div>
+                            <div><div class="row-cn">{{ d.car_number }}</div>{% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}<div class="row-dn">{{ d.driver_name }}</div>{% if d.rayon %}<a class="row-rayon" href="{{ d.gps_link or ('https://maps.google.com/?q=' ~ d.gps_lat ~ ',' ~ d.gps_lng) }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}</div>
                             <div class="row-r">
                                 {% if d.idle_minutes is not none %}
                                     <div class="row-eta row-eta-free">🕐 {{ d.idle_minutes }} daq bo'sh</div>
@@ -270,7 +270,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="{{ d.gps_link or ('https://maps.google.com/?q=' ~ d.gps_lat ~ ',' ~ d.gps_lng) }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
@@ -296,7 +296,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="{{ d.gps_link or ('https://maps.google.com/?q=' ~ d.gps_lat ~ ',' ~ d.gps_lng) }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
@@ -322,7 +322,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="{{ d.gps_link or ('https://maps.google.com/?q=' ~ d.gps_lat ~ ',' ~ d.gps_lng) }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id %}<div class="row-o">#{{ d.order_id }}</div>{% endif %}

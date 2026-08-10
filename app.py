@@ -528,19 +528,80 @@ def get_wialon_positions() -> dict:
             pos = item.get("pos")
             if not pos or pos.get("y") is None or pos.get("x") is None:
                 continue
-            words = name.strip().split()
-            while words and words[0].upper() in _WIALON_TYPE_WORDS:
-                words.pop(0)
+            # Strip vehicle-type words WHEREVER they appear in the Wialon
+            # unit name (not just as a leading prefix) — some units are
+            # named "Gazel 01 265 GB", others "01 265 GB Gazel" or similar,
+            # and requiring the type word to come first silently dropped
+            # the match (car showed no rayon at all) for anything named
+            # the other way round.
+            words = [w for w in name.strip().split() if w.upper() not in _WIALON_TYPE_WORDS]
             plate = _normalize_plate(" ".join(words))
             if not plate:
                 continue
-            result[plate] = {"lat": pos["y"], "lng": pos["x"]}
+            result[plate] = {"lat": pos["y"], "lng": pos["x"], "unit_id": item.get("id")}
 
         _set("wialon_positions", result)
         return result
     except Exception as e:
         logger.warning(f"[wialon] search_items failed: {e}")
         return {}
+
+
+_LOCATOR_LINK_CACHE = {}  # unit_id -> (url, cached_at)
+
+
+def get_wialon_locator_link(unit_id):
+    """
+    Returns a public Wialon "Locator" link (https://<host>/locator/index.html?t=TOKEN)
+    for the given unit — opens Wialon's own live map, focused on just that
+    one car, with no login required. This is what the rayon text links to
+    now instead of a static Google Maps pin, per dispatcher request ("GPS'ga
+    o'tadigan, o'sha moshina ochilishi kerak").
+
+    Each link needs its own token (svc=token/update, one Wialon API call),
+    so results are cached for 6 days per unit — comfortably under Wialon's
+    100-day token auto-expiry, and cheap since a unit's id never changes.
+    Without this, generating a fresh token on every single dashboard
+    refresh for every car would be both slow and wasteful.
+    """
+    if not unit_id or not WIALON_URL:
+        return None
+    cached = _LOCATOR_LINK_CACHE.get(unit_id)
+    if cached and time.time() - cached[1] < 6 * 24 * 3600:
+        return cached[0]
+
+    sid = _wialon_login()
+    if not sid:
+        return None
+    try:
+        r = httpx.get(
+            f"{WIALON_URL}/wialon/ajax.html",
+            params={
+                "svc": "token/update",
+                "sid": sid,
+                "params": json.dumps({
+                    "callMode": "create",
+                    "app": "locator",
+                    "at": 0,
+                    "dur": 0,
+                    "fl": 256,
+                    "p": json.dumps({"zones": 0, "tracks": 1}),
+                    "items": [unit_id],
+                }),
+            },
+            timeout=10,
+        )
+        data = r.json()
+        token = data.get("h") if isinstance(data, dict) else None
+        if not token:
+            logger.warning(f"[wialon] locator token creation failed for unit {unit_id}: {data}")
+            return None
+        url = f"{WIALON_URL}/locator/index.html?t={token}"
+        _LOCATOR_LINK_CACHE[unit_id] = (url, time.time())
+        return url
+    except Exception as e:
+        logger.warning(f"[wialon] locator link error for unit {unit_id}: {e}")
+        return None
 
 
 _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
@@ -561,6 +622,36 @@ _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
 # neighboring one. If a specific car is consistently shown in the wrong
 # tuman, that's a sign this particular point needs nudging — tell me the
 # car and the correct tuman and this table gets adjusted.
+# Well-known informal local place names (mahalla/massiv-level, NOT one of
+# the 12 official city tumans below) that drivers and dispatchers actually
+# use day to day — e.g. "Xasanboy", "Keles" — instead of a formal street
+# address. Requested explicitly: when a car's GPS point is near one of
+# these, show the well-known place name INSTEAD of the street name, since
+# nobody in the group actually navigates by street name out there.
+#
+# Coordinates sourced from public map data (approximate, street/landmark
+# level) — this is a starting set covering the places mentioned so far.
+# Easy to extend: just add "Name": (lat, lng) below.
+_KNOWN_LOCAL_PLACES = {
+    "Xasanboy":  (41.4150, 69.2950),
+    "Keles":     (41.3982, 69.2054),
+    "Chuqursoy": (41.3764, 69.2405),
+    "Sebzor":    (41.3304, 69.2497),
+    "Chorsu":    (41.3252, 69.2321),
+}
+_KNOWN_PLACE_RADIUS_KM = 2.2
+
+
+def _match_known_local_place(lat, lng):
+    """Nearest _KNOWN_LOCAL_PLACES entry within _KNOWN_PLACE_RADIUS_KM, or None."""
+    best_name, best_dist = None, None
+    for name, (plat, plng) in _KNOWN_LOCAL_PLACES.items():
+        d = _haversine_km(lat, lng, plat, plng)
+        if d <= _KNOWN_PLACE_RADIUS_KM and (best_dist is None or d < best_dist):
+            best_name, best_dist = name, d
+    return best_name
+
+
 _TASHKENT_DISTRICTS = {
     "Yunusobod tumani":     (41.3714, 69.2794),
     "Mirzo Ulugbek tumani": (41.3294, 69.3475),
@@ -633,6 +724,14 @@ def get_rayon(lat, lng):
     cached = _RAYON_CACHE.get(grid_key)
     if cached and time.time() - cached[1] < 600:
         return cached[0]
+
+    # A well-known informal place (Xasanboy, Keles, ...) beats any formal
+    # street/district name — that's literally what the dispatcher asked
+    # for, and it saves a Yandex call too.
+    known_place = _match_known_local_place(lat, lng)
+    if known_place:
+        _RAYON_CACHE[grid_key] = (known_place, time.time())
+        return known_place
 
     rayon = None
     try:
@@ -875,14 +974,19 @@ async def dashboard(request: Request):
         pos = wialon_positions.get(_normalize_plate(car.get("car_number") or ""))
         if pos:
             car["rayon"] = get_rayon(pos["lat"], pos["lng"])
-            # Kept alongside the text so the dashboard can link the rayon
-            # straight to a live map pin at the car's last known position.
             car["gps_lat"] = pos["lat"]
             car["gps_lng"] = pos["lng"]
+            # The rayon text links here — Wialon's own live tracking map
+            # for this one car (moving in real time), not a static pin —
+            # per dispatcher request. Falls back to a plain Maps pin if a
+            # Locator link couldn't be generated (e.g. Wialon down).
+            car["gps_link"] = get_wialon_locator_link(pos.get("unit_id")) \
+                or f"https://maps.google.com/?q={pos['lat']},{pos['lng']}"
         else:
             car["rayon"] = None
             car["gps_lat"] = None
             car["gps_lng"] = None
+            car["gps_link"] = None
 
     # 4-way live board: Bo'sh / Yuk ortyapti / Yo'lda / Do'konga qaytyapti —
     # driven by Supabase's real per-order status (live_stages), not the
