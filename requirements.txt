@@ -13,3 +13,4 @@ uvicorn
 jinja2
 gspread
 aiohttp
+httpx

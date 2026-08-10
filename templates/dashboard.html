@@ -150,7 +150,7 @@
         /* 3-column live board */
         .board {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 12px;
         }
         .col { background: #202020; border-radius: 12px; padding: 12px; min-height: 120px; }
@@ -169,6 +169,8 @@
         .col-yuk .col-cnt { background: #ffc10722; color: #ffc107; }
         .col-yolda .col-h { color: #007bff; }
         .col-yolda .col-cnt { background: #007bff22; color: #007bff; }
+        .col-qayt .col-h { color: #a855f7; }
+        .col-qayt .col-cnt { background: #a855f722; color: #a855f7; }
         .col-list { display: flex; flex-direction: column; gap: 6px; max-height: 74vh; overflow-y: auto; }
         .col-list::-webkit-scrollbar { width: 4px; }
         .col-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
@@ -304,6 +306,25 @@
                         </div>
                         {% endfor %}
                         {% if not board.YOLDA %}<div class="emp">Yo'q</div>{% endif %}
+                    </div>
+                </div>
+                <div class="col col-qayt">
+                    <div class="col-h"><span>🏬 Do'konga qaytyapti</span><span class="col-cnt">{{ board.QAYTYAPTI|length }}</span></div>
+                    <div class="col-list">
+                        {% for d in board.QAYTYAPTI %}
+                        <div class="row-c" data-car="{{ d.car_number|upper }}" data-type="{{ (d.vehicle_type or '')|upper }}">
+                            <div>
+                                <div class="row-cn">{{ d.car_number }}</div>
+                                {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
+                                <div class="row-dn">{{ d.driver_name }}</div>
+                            </div>
+                            <div class="row-r">
+                                {% if d.order_id %}<div class="row-o">#{{ d.order_id }}</div>{% endif %}
+                                {% if d.eta_minutes is not none %}<div class="row-eta">🏬 ~{{ d.eta_minutes }} daq</div>{% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if not board.QAYTYAPTI %}<div class="emp">Yo'q</div>{% endif %}
                     </div>
                 </div>
             </div>

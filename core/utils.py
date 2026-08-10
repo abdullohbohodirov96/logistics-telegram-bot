@@ -1,9 +1,44 @@
 import re
+import math
 import pytz
 from datetime import datetime
-from core.config import TIMEZONE
+from core.config import TIMEZONE, SHOP_LAT, SHOP_LNG
 
 tz = pytz.timezone(TIMEZONE)
+
+# Straight-line (haversine) distance underestimates real road distance, and
+# a delivery truck doesn't drive at highway speed through city traffic — these
+# two constants convert "as the crow flies" km into a realistic ETA. Tune them
+# if the estimate consistently runs too fast/slow versus what actually happens.
+ROAD_DISTANCE_FACTOR = 1.35   # road km ≈ straight-line km * this
+AVG_SPEED_KMH = 28            # assumed average city driving speed
+
+
+def haversine_km(lat1, lng1, lat2, lng2):
+    """Great-circle distance between two lat/lng points, in kilometers."""
+    R = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def estimate_minutes_to_shop(lat, lng):
+    """
+    Approximate minutes to drive from (lat, lng) back to the Dunyabunya shop,
+    based on straight-line distance adjusted for real road travel. Returns
+    None if lat/lng aren't available.
+    """
+    if lat is None or lng is None:
+        return None
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    km = haversine_km(lat, lng, SHOP_LAT, SHOP_LNG) * ROAD_DISTANCE_FACTOR
+    hours = km / AVG_SPEED_KMH
+    return max(1, round(hours * 60))
 
 def normalize_car_number(value):
     """
@@ -39,11 +74,18 @@ def parse_dt(dt_str):
         # Some DBs return space instead of T
         if ' ' in clean_str and 'T' not in clean_str:
             clean_str = clean_str.replace(' ', 'T')
-            
+
         dt = datetime.fromisoformat(clean_str)
         if dt.tzinfo is None:
-            # If naive, assume it's UTC (common for DB timestamps)
-            dt = pytz.utc.localize(dt)
+            # Every write in this codebase sends an already-Tashkent-local,
+            # offset-aware timestamp (get_now().isoformat()). If it comes
+            # back with no offset at all (naive), that raw number IS the
+            # Tashkent wall-clock time already — NOT UTC. Assuming UTC here
+            # and converting would incorrectly add another 5 hours on top
+            # (this was the bug behind finish/start times shown 5h in the
+            # future on both the bot and the dashboard).
+            dt = tz.localize(dt)
+            return dt
         return dt.astimezone(tz)
     except Exception:
         return None

@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
-from core.config import GROUP_CHAT_ID
+from core.config import GROUP_CHAT_ID, ADMIN_IDS
 from core.db import get_order, update_order, supabase
 from core.sheets import (
     update_order_status_by_order_id,
@@ -16,7 +16,8 @@ from core.sheets import (
 )
 from core.states import DeliveryStates
 import core.keyboards as kb
-from core.utils import get_now, format_duration_detailed, parse_dt
+from core.utils import get_now, format_duration_detailed, parse_dt, estimate_minutes_to_shop
+from core.geocoding import reverse_geocode
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -753,17 +754,38 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 if filial and filial in BRANCHES:
                     target_group = BRANCHES[filial].get('group_id') or DEFAULT_GROUP_ID
 
+                # Yuk tushirilgan joy manzili (rayon/mahalla/ko'cha) va do'konga
+                # taxminiy qaytish vaqti — guruh xabari VA admin DM'i uchun
+                # kerak, shu sabab target_group borligidan qat'i nazar bu yerda
+                # hisoblanadi.
+                d_lat, d_lng = order.get('delivered_lat'), order.get('delivered_lng')
+                maps_url = f"https://maps.google.com/?q={d_lat},{d_lng}"
+
+                # Yandex Geocoder key sozlanmagan bo'lsa None qaytadi, shunda
+                # faqat Maps havolasi ko'rsatiladi.
+                delivered_address = reverse_geocode(d_lat, d_lng)
+                location_line = f"📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})"
+                if delivered_address:
+                    location_line = f"📍 **Yetkazilgan manzil:** {delivered_address}\n📍 [Google Maps]({maps_url})"
+
+                # Yuk tushirilgan joydan do'konga taxminan qancha vaqtda
+                # qaytishi mumkinligi (haqiqiy yo'l masofasiga taxminiy
+                # tuzatish bilan hisoblangan, GPS uzatib turmagani uchun
+                # "taxminan" — core/utils.py'dagi ROAD_DISTANCE_FACTOR/
+                # AVG_SPEED_KMH ni sozlash mumkin).
+                eta_shop_min = estimate_minutes_to_shop(d_lat, d_lng)
+                eta_line = f"\n🏬 **Do'konga qaytishi (taxminan):** ~{eta_shop_min} daq\n" if eta_shop_min else ""
+
                 if target_group:
 
                     msg_id = order.get('group_message_id')
                     if msg_id:
                         try: await bot.delete_message(chat_id=target_group, message_id=int(msg_id))
                         except: pass
-                    
-                    maps_url = f"https://maps.google.com/?q={order.get('delivered_lat')},{order.get('delivered_lng')}"
+
                     grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
                                 f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n🚘 **Mashina:** {order.get('car_number', '-')}\n"
-                                f"📍 **Manzil:** {order.get('address', '-')}\n📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})\n\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
+                                f"📍 **Manzil:** {order.get('address', '-')}\n{location_line}\n{eta_line}\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
                                 f"📋 **Etaplar:**\n"
                                 f"{etaplar_full}\n\n"
                                 f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
@@ -777,7 +799,22 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                     except Exception as e:
                         logger.error(f"[FINISH] Failed to send media group to {target_group}: {e}")
 
-                
+                # Admin DM — "yuk tushdi, yakunlandi, do'konga taxminan qachon
+                # qaytadi" xabari, guruhda ko'rmay qolgan taqdirda ham
+                # adminlar to'g'ridan-to'g'ri olishi uchun.
+                if ADMIN_IDS:
+                    admin_text = (
+                        f"✅ **Yuk tushirildi, buyurtma yakunlandi**\n\n"
+                        f"🆔 #{order_id}   🚘 {order.get('car_number', '-')}   👤 {order.get('driver_name', '-')}\n"
+                        f"{location_line}\n"
+                        f"{eta_line}"
+                    )
+                    for admin_id in ADMIN_IDS:
+                        try:
+                            await bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="Markdown")
+                        except Exception as e:
+                            logger.error(f"[FINISH] Failed to DM admin {admin_id}: {e}")
+
                 # Driver status reset — remove finished order from driver's sheet list
                 tid = order.get('driver_telegram_id')
                 car_number = order.get('car_number', '')

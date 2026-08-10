@@ -10,6 +10,7 @@ Supabase is only used for: today completed count + recent history list.
 import os
 import json
 import time
+import math
 import logging
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Request
@@ -35,6 +36,19 @@ QORASAROY_ORDERS_SHEET_NAME = os.getenv("QORASAROY_ORDERS_SHEET_NAME", "Qorasaro
 # All branch order sheets to scan for problem rows (dedup, keep order stable).
 ORDERS_SHEETS = list(dict.fromkeys([ORDERS_SHEET_NAME, QORASAROY_ORDERS_SHEET_NAME]))
 TZ = timezone(timedelta(hours=5))  # Asia/Tashkent
+
+# "Dunyabunya" shop/warehouse fixed location — every driver returns here
+# after unloading. Resolved from the shop's Yandex Maps pin
+# (https://yandex.uz/maps/-/CTS2RU58 -> Toshkent tumani, Qorasaroy mahalla,
+# Shohsada ko'chasi). Kept as a standalone constant here (not imported from
+# core/) since this dashboard service is intentionally self-contained.
+SHOP_LAT = 41.403393
+SHOP_LNG = 69.231954
+
+# How long (minutes) after a delivery finishes we keep showing the car in
+# the "Do'konga qaytyapti" column before it just falls back to "Bo'sh". This
+# is a ceiling in case the ETA estimate undershoots reality.
+RETURN_TO_SHOP_MAX_MINUTES = 90
 
 # Sheet statuses that mean "this order did NOT go out and needs a human to
 # look at it" — must match exactly what core/scheduler.py writes.
@@ -355,6 +369,82 @@ def get_driver_live_stages() -> dict:
     return stages
 
 
+def _haversine_km(lat1, lng1, lat2, lng2):
+    R = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+# Straight-line distance underestimates real road distance, and a delivery
+# truck doesn't move at highway speed through city traffic — these two
+# constants convert "as the crow flies" km into a realistic ETA. Tune if the
+# estimate consistently runs too fast/slow versus what actually happens.
+_ROAD_DISTANCE_FACTOR = 1.35
+_AVG_SPEED_KMH = 28
+
+
+def _estimate_minutes_to_shop(lat, lng):
+    if lat is None or lng is None:
+        return None
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    km = _haversine_km(lat, lng, SHOP_LAT, SHOP_LNG) * _ROAD_DISTANCE_FACTOR
+    return max(1, round((km / _AVG_SPEED_KMH) * 60))
+
+
+def get_returning_to_shop() -> dict:
+    """
+    Returns {telegram_id(str): {"eta_minutes": int, "order_id": str}} for
+    drivers who just finished a delivery and are (estimated to be) still on
+    their way back to the shop.
+
+    We don't have continuous live GPS — only the single point the driver
+    shared right before finishing (delivered_lat/delivered_lng). So this
+    counts down from that one snapshot: estimate the drive time from that
+    point to the shop, then subtract however many minutes have already
+    passed since the order finished. Once that hits zero (or
+    RETURN_TO_SHOP_MAX_MINUTES elapses as a safety ceiling), the car drops
+    out of this list and just shows as plain "Bo'sh". Cached 8 seconds.
+    """
+    cached = _cached("returning_to_shop", ttl=8)
+    if cached is not None:
+        return cached
+
+    now = datetime.now(TZ)
+    lookback = (now - timedelta(minutes=RETURN_TO_SHOP_MAX_MINUTES)).isoformat()
+
+    rows = _sb_rows("orders", {
+        "select": "driver_telegram_id,order_id,completed_at,delivered_lat,delivered_lng",
+        "current_status": "eq.YAKUNLANDI",
+        "completed_at": f"gte.{lookback}",
+        "order": "completed_at.desc",
+        "limit": "200",
+    })
+
+    result = {}
+    for r in rows:
+        tid = str(r.get('driver_telegram_id') or '').strip()
+        if not tid or tid in result:
+            continue  # keep only each driver's most recent finish (rows are already desc)
+        completed_at = _parse_iso(r.get('completed_at'))
+        eta_total = _estimate_minutes_to_shop(r.get('delivered_lat'), r.get('delivered_lng'))
+        if not completed_at or not eta_total:
+            continue
+        elapsed = int((now - completed_at).total_seconds() / 60)
+        remaining = eta_total - elapsed
+        if remaining <= 0:
+            continue
+        result[tid] = {"eta_minutes": remaining, "order_id": r.get('order_id') or ''}
+
+    _set("returning_to_shop", result)
+    return result
+
+
 def get_last_finished_times(telegram_ids: list) -> dict:
     """
     For the given telegram_ids (drivers currently showing as free), find
@@ -447,6 +537,7 @@ async def dashboard(request: Request):
     cars = sheets_read_cars()
     sb = get_supabase_stats()
     live_stages = get_driver_live_stages()
+    returning = get_returning_to_shop()
     problem_orders = sheets_read_problem_orders()
 
     # Tag every car with its vehicle type (GAZEL / LABO / DAMAS / CHANGAN...)
@@ -455,15 +546,23 @@ async def dashboard(request: Request):
     for car in cars:
         car["vehicle_type"] = get_vehicle_type(car.get("car_number") or "")
 
-    # 3-way live board: Bo'sh / Yuk ortyapti / Yo'lda — driven by Supabase's
-    # real per-order status (live_stages), not the sheet's coarse 2-state
-    # column, so "Yo'lda" is actually accurate. Each car also gets an
-    # estimated free-up time/countdown from the vehicle-duration table.
-    board = {"BOSH": [], "YUK_ORTYAPTI": [], "YOLDA": []}
+    # 4-way live board: Bo'sh / Yuk ortyapti / Yo'lda / Do'konga qaytyapti —
+    # driven by Supabase's real per-order status (live_stages), not the
+    # sheet's coarse 2-state column, so "Yo'lda" is actually accurate. Each
+    # car also gets an estimated free-up time/countdown from the
+    # vehicle-duration table (loading/en-route) or from the delivered-point
+    # -> shop distance (just-finished, heading back).
+    board = {"BOSH": [], "YUK_ORTYAPTI": [], "YOLDA": [], "QAYTYAPTI": []}
     for car in cars:
         info = live_stages.get(car["telegram_id"]) if car.get("telegram_id") else None
         if not info:
-            board["BOSH"].append(car)
+            ret = returning.get(car["telegram_id"]) if car.get("telegram_id") else None
+            if ret:
+                car["order_id"]    = ret.get("order_id")
+                car["eta_minutes"] = ret.get("eta_minutes")
+                board["QAYTYAPTI"].append(car)
+            else:
+                board["BOSH"].append(car)
             continue
 
         car["order_id"]    = info.get("order_id")
@@ -478,7 +577,7 @@ async def dashboard(request: Request):
     # Soonest-free-first: cars about to become available float to the top,
     # cars with no known duration (not in the reference table) sort last.
     _no_eta = 10 ** 9
-    for key in ("YUK_ORTYAPTI", "YOLDA"):
+    for key in ("YUK_ORTYAPTI", "YOLDA", "QAYTYAPTI"):
         board[key].sort(key=lambda c: c.get("eta_minutes") if c.get("eta_minutes") is not None else _no_eta)
 
     # How long has each free car actually been free? Pulled from their
