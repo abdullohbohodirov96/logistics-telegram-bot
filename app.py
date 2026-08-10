@@ -306,7 +306,7 @@ def get_supabase_stats() -> dict:
 
 # ── Routes ──────────────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def dashboard(request: Request):
     cars = sheets_read_cars()
     sb = get_supabase_stats()
