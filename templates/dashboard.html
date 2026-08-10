@@ -19,7 +19,7 @@
         /* Header */
         .hdr {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 14px 28px;
+            padding: 8px 28px;
             background: #1a1a1a;
             border-bottom: 3px solid #e97609;
         }
@@ -30,23 +30,25 @@
         .dot { width: 10px; height: 10px; border-radius: 50%; background: #28a745; animation: p 2s infinite; }
         @keyframes p { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-        /* Stats */
+        /* Stats — compact, the car board below is the priority */
         .sts {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
-            padding: 16px 28px;
+            gap: 8px;
+            padding: 8px 28px;
         }
         .sc {
             background: #1c1c1c;
-            border-radius: 14px;
-            padding: 18px 12px;
+            border-radius: 10px;
+            padding: 8px 10px;
             text-align: center;
-            border-bottom: 4px solid #444;
+            border-bottom: 3px solid #444;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .sc-i { font-size: clamp(24px, 2.2vw, 38px); margin-bottom: 4px; }
-        .sc-l { font-size: clamp(10px, .95vw, 15px); color: #888; text-transform: uppercase; font-weight: 700; letter-spacing: .5px; margin-bottom: 6px; }
-        .sc-n { font-size: clamp(28px, 3.2vw, 52px); font-weight: 900; line-height: 1; }
+        .sc-i { font-size: clamp(15px, 1.3vw, 20px); }
+        .sc-txt { text-align: left; }
+        .sc-l { font-size: clamp(9px, .8vw, 12px); color: #888; text-transform: uppercase; font-weight: 700; letter-spacing: .3px; margin-bottom: 1px; }
+        .sc-n { font-size: clamp(16px, 1.6vw, 24px); font-weight: 900; line-height: 1; }
 
         .sd { border-color: #28a745; } .sd .sc-n { color: #28a745; }
         .sa { border-color: #007bff; } .sa .sc-n { color: #007bff; }
@@ -54,10 +56,10 @@
         .sf { border-color: #dc3545; } .sf .sc-n { color: #dc3545; }
 
         .car-nums {
-            display: flex; justify-content: center; align-items: baseline; gap: 10px;
-            font-size: clamp(24px, 2.8vw, 44px); font-weight: 900;
+            display: flex; justify-content: flex-start; align-items: baseline; gap: 5px;
+            font-size: clamp(16px, 1.6vw, 24px); font-weight: 900;
         }
-        .car-nums .lbl { font-size: clamp(11px, 1vw, 17px); font-weight: 700; }
+        .car-nums .lbl { font-size: clamp(9px, .8vw, 12px); font-weight: 700; }
         .clr-b { color: #ffc107; }
         .clr-f { color: #28a745; }
 
@@ -101,7 +103,7 @@
         .cc-busy { border-color: #ffc107; } .cc-busy .bdg { background: #ffc107; color: #000; }
 
         /* Updates */
-        .ul { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; }
+        .ul { display: flex; flex-direction: column; gap: 8px; max-height: 74vh; overflow-y: auto; }
         .ul::-webkit-scrollbar { width: 4px; }
         .ul::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
         .ui { background: #242424; padding: 10px 12px; border-radius: 8px; border-left: 3px solid #555; }
@@ -133,7 +135,7 @@
         .col-yuk .col-cnt { background: #ffc10722; color: #ffc107; }
         .col-yolda .col-h { color: #007bff; }
         .col-yolda .col-cnt { background: #007bff22; color: #007bff; }
-        .col-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow-y: auto; }
+        .col-list { display: flex; flex-direction: column; gap: 6px; max-height: 74vh; overflow-y: auto; }
         .col-list::-webkit-scrollbar { width: 4px; }
         .col-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
         .row-c {
@@ -167,27 +169,26 @@
     <div class="sts">
         <div class="sc sd">
             <div class="sc-i">✅</div>
-            <div class="sc-l">Bugun yetkazildi</div>
-            <div class="sc-n">{{ stats.finished_today }}</div>
+            <div class="sc-txt"><div class="sc-l">Bugun yetkazildi</div><div class="sc-n">{{ stats.finished_today }}</div></div>
         </div>
         <div class="sc sa">
             <div class="sc-i">🚚</div>
-            <div class="sc-l">Band mashinalar</div>
-            <div class="sc-n">{{ busy }}</div>
+            <div class="sc-txt"><div class="sc-l">Band mashinalar</div><div class="sc-n">{{ busy }}</div></div>
         </div>
         <div class="sc sv">
             <div class="sc-i">🚗</div>
-            <div class="sc-l">Mashinalar ({{ total }})</div>
-            <div class="car-nums">
-                <span class="clr-b">{{ busy }}</span><span class="lbl clr-b">band</span>
-                <span style="color:#555">/</span>
-                <span class="clr-f">{{ free }}</span><span class="lbl clr-f">bo'sh</span>
+            <div class="sc-txt">
+                <div class="sc-l">Mashinalar ({{ total }})</div>
+                <div class="car-nums">
+                    <span class="clr-b">{{ busy }}</span><span class="lbl clr-b">band</span>
+                    <span style="color:#555">/</span>
+                    <span class="clr-f">{{ free }}</span><span class="lbl clr-f">bo'sh</span>
+                </div>
             </div>
         </div>
         <div class="sc sf">
             <div class="sc-i">⚠️</div>
-            <div class="sc-l">Muammoli</div>
-            <div class="sc-n">{{ stats.failed }}</div>
+            <div class="sc-txt"><div class="sc-l">Muammoli</div><div class="sc-n">{{ stats.failed }}</div></div>
         </div>
     </div>
 
