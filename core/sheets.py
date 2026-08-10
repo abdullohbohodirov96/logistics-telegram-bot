@@ -15,6 +15,30 @@ SCOPES = [
 ]
 
 _GSPREAD_CLIENT = None
+_SPREADSHEET_CACHE = None
+_SPREADSHEET_CACHE_TIME = 0.0
+
+
+def _open_spreadsheet(client):
+    """
+    Cached wrapper around client.open_by_key(GOOGLE_SHEET_ID).
+
+    gspread makes a fresh Drive/Sheets API round-trip on every single
+    open_by_key() call, even though the spreadsheet's identity never
+    changes. Every read/write in this file used to pay that extra
+    round-trip EVERY time — which directly adds latency to the
+    instant-dispatch webhook path (SEND -> driver gets the message), since
+    a single dispatch can hit this 3-4 times (read the row, write the
+    status, update the driver sheet, etc). Cached for 5 minutes: long
+    enough to remove the overhead from the hot path, short enough that
+    re-sharing/renaming the sheet (rare) is picked up again quickly.
+    """
+    global _SPREADSHEET_CACHE, _SPREADSHEET_CACHE_TIME
+    if _SPREADSHEET_CACHE and time.time() - _SPREADSHEET_CACHE_TIME < 300:
+        return _SPREADSHEET_CACHE
+    _SPREADSHEET_CACHE = client.open_by_key(GOOGLE_SHEET_ID)
+    _SPREADSHEET_CACHE_TIME = time.time()
+    return _SPREADSHEET_CACHE
 
 
 # ── Retry wrapper for 429 errors ──────────────────────────────────────────────
@@ -90,7 +114,7 @@ def get_new_orders(sheet_name=None):
     target_sheet = sheet_name or ORDERS_SHEET_NAME
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(target_sheet)
             return worksheet.get_all_values()
 
@@ -143,7 +167,7 @@ def get_order_row(sheet_name: str, row_index: int):
     target_sheet = sheet_name or ORDERS_SHEET_NAME
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(target_sheet)
             headers = worksheet.row_values(1)
             row = worksheet.row_values(row_index)
@@ -198,7 +222,7 @@ def get_drivers():
         return {}
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
 
@@ -240,7 +264,7 @@ def update_order_status(row_index, status, sheet_name=None):
     target_sheet = sheet_name or ORDERS_SHEET_NAME
     try:
         def _update():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(target_sheet)
             headers = worksheet.row_values(1)
             status_idx = fuzzy_match_header(headers, ['status', 'holat'])
@@ -266,7 +290,7 @@ def update_order_status_by_order_id(order_id, status, sheet_name=None):
     try:
         from core.config import BRANCHES
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
 
             if sheet_name:
                 sheets_to_try = [sheet_name]
@@ -313,7 +337,7 @@ def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
         from core.config import BRANCHES
 
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             seen = set()
             sheets_to_try = []
             for b in BRANCHES.values():
@@ -353,7 +377,7 @@ def write_order_result_note(row_index: int, note: str, sheet_name: str = None):
     target_sheet = sheet_name or ORDERS_SHEET_NAME
     try:
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(target_sheet)
             worksheet.update_cell(row_index, 8, note)
             logger.info(f"[{target_sheet}] Row {row_index} col H → '{note}'")
@@ -399,7 +423,7 @@ def update_driver_status_sheet(car_number, status, order_id=""):
         return False
     try:
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             row = _find_driver_row(worksheet, car_number)
             if not row:
@@ -451,7 +475,7 @@ def remove_order_from_driver_sheet(car_number, finished_order_id):
         return False
     try:
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             row = _find_driver_row(worksheet, car_number)
             if not row:
@@ -494,7 +518,7 @@ def cancel_order_in_sheets(order_id: str) -> bool:
         from core.config import BRANCHES
 
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             seen = set()
             for b in BRANCHES.values():
                 s = b.get('orders_sheet', '')
@@ -545,7 +569,7 @@ def bulk_close_stuck_orders_in_sheets(new_status='ESKI_YOPILDI',
     skip_upper = {s.upper() for s in skip_statuses}
     try:
         from core.config import BRANCHES
-        sh = client.open_by_key(GOOGLE_SHEET_ID)
+        sh = _open_spreadsheet(client)
         seen = set()
         for b in BRANCHES.values():
             sheet_name = b.get('orders_sheet', '')
@@ -603,7 +627,7 @@ def bulk_reset_drivers_sheet():
         return 0
     try:
         def _do():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             ws = sh.worksheet(DRIVERS_SHEET_NAME)
             values = ws.get_all_values()
             if not values or len(values) < 2:
@@ -634,7 +658,7 @@ def get_driver_by_tid(tid):
         return None
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
         values = _retry(_read)
@@ -658,7 +682,7 @@ def get_drivers_status_list():
         return []
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
         values = _retry(_read)
@@ -686,7 +710,7 @@ def get_all_drivers_list():
         return []
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
         values = _retry(_read)
@@ -702,7 +726,7 @@ def get_all_cars_list():
         return []
     try:
         def _read():
-            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            sh = _open_spreadsheet(client)
             worksheet = sh.worksheet(DRIVERS_SHEET_NAME)
             return worksheet.get_all_values()
         values = _retry(_read)
