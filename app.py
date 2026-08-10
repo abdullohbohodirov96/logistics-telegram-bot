@@ -390,29 +390,40 @@ def get_supabase_stats() -> dict:
     core/db.py everywhere) — this used to check for 'DONE', which no
     order ever actually has, so "Bugun yetkazildi" was always 0.
     """
-    cached = _cached("sb_stats", ttl=10)
+    # Cache key includes today's Tashkent date, so the list can never leak
+    # stale data across a midnight rollover — the moment the date changes,
+    # it's a guaranteed cache miss and we recompute with a fresh boundary.
+    now = datetime.now(TZ)
+    today_start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start_dt = today_start_dt + timedelta(days=1)
+    cache_key = f"sb_stats_{today_start_dt.strftime('%Y-%m-%d')}"
+
+    cached = _cached(cache_key, ttl=10)
     if cached is not None:
         return cached
 
-    now = datetime.now(TZ)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_start = today_start_dt.isoformat()
+    tomorrow_start = tomorrow_start_dt.isoformat()
 
     delivered_today = _sb_rows("orders", {
         "select": "order_id,car_number,driver_name,completed_at",
         "current_status": "eq.YAKUNLANDI",
         "completed_at": f"gte.{today_start}",
+        "and": f"(completed_at.lt.{tomorrow_start})",
         "order": "completed_at.desc",
         "limit": "200",
     })
     for o in delivered_today:
         dt = _parse_iso(o.get("completed_at"))
+        # Always show the exact Asia/Tashkent time (HH:MM), never a raw
+        # UTC/server timestamp.
         o["completed_time"] = dt.strftime("%H:%M") if dt else "-"
 
     result = {
         "finished_today": len(delivered_today),
         "delivered_today": delivered_today,
     }
-    _set("sb_stats", result)
+    _set(cache_key, result)
     return result
 
 # ── Routes ──────────────────────────────────────────────────────────

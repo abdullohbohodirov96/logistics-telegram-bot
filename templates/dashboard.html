@@ -8,6 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
         body {
             background: #0f0f0f;
             color: #fff;
@@ -54,6 +55,20 @@
             text-align: center;
             border-bottom: 3px solid #444;
             display: flex; align-items: center; justify-content: center; gap: 8px;
+            text-decoration: none; color: inherit; cursor: pointer;
+            transition: transform .15s ease, background .15s ease;
+        }
+        .sc:hover { background: #262626; transform: translateY(-2px); }
+        .sc:active { transform: translateY(0); }
+
+        /* Briefly glow the section a stat card links to, so it's obvious
+           where the click landed. */
+        .pnl:target {
+            animation: scFlash 1.6s ease;
+        }
+        @keyframes scFlash {
+            0%   { box-shadow: 0 0 0 2px #e97609; }
+            100% { box-shadow: 0 0 0 0 rgba(233,118,9,0); }
         }
         .sc-i { font-size: clamp(15px, 1.3vw, 20px); }
         .sc-txt { text-align: left; }
@@ -194,15 +209,15 @@
     </div>
 
     <div class="sts">
-        <div class="sc sd">
+        <a class="sc sd" href="#delivered-section">
             <div class="sc-i">✅</div>
             <div class="sc-txt"><div class="sc-l">Bugun yetkazildi</div><div class="sc-n">{{ stats.finished_today }}</div></div>
-        </div>
-        <div class="sc sa">
+        </a>
+        <a class="sc sa" href="#board-section">
             <div class="sc-i">🚚</div>
             <div class="sc-txt"><div class="sc-l">Band mashinalar</div><div class="sc-n">{{ busy }}</div></div>
-        </div>
-        <div class="sc sv">
+        </a>
+        <a class="sc sv" href="#board-section">
             <div class="sc-i">🚗</div>
             <div class="sc-txt">
                 <div class="sc-l">Mashinalar ({{ total }})</div>
@@ -212,15 +227,15 @@
                     <span class="clr-f">{{ free }}</span><span class="lbl clr-f">bo'sh</span>
                 </div>
             </div>
-        </div>
-        <div class="sc sf">
+        </a>
+        <a class="sc sf" href="#problems-section">
             <div class="sc-i">⚠️</div>
             <div class="sc-txt"><div class="sc-l">Muammoli</div><div class="sc-n">{{ stats.failed }}</div></div>
-        </div>
+        </a>
     </div>
 
     <div class="main">
-        <div class="pnl">
+        <div class="pnl" id="board-section">
             <div class="pnl-t">🚗 Mashinalar holati (jonli)</div>
             <div class="board">
                 <div class="col col-bosh">
@@ -291,7 +306,7 @@
             </div>
         </div>
 
-        <div class="pnl list-panel">
+        <div class="pnl list-panel" id="problems-section">
             <div class="pnl-t">⚠️ Muammoli buyurtmalar ({{ problem_orders|length }})</div>
             <div class="list-grid">
                 {% for p in problem_orders %}
@@ -307,7 +322,7 @@
             </div>
         </div>
 
-        <div class="pnl list-panel">
+        <div class="pnl list-panel" id="delivered-section">
             <div class="pnl-t">✅ Bugun yetkazilganlar ({{ delivered_today|length }})</div>
             <div class="list-grid">
                 {% for o in delivered_today %}
