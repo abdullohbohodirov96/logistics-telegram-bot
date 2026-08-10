@@ -2,9 +2,13 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher
+from aiohttp import web
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from core.config import BOT_TOKEN, POLL_INTERVAL_SECONDS, is_sheets_configured, WEBHOOK_URL, PORT
+from core.config import (
+    BOT_TOKEN, POLL_INTERVAL_SECONDS, is_sheets_configured,
+    WEBHOOK_URL, PORT, SHEET_WEBHOOK_SECRET,
+)
 from core.handlers import router
 
 logging.basicConfig(
@@ -27,12 +31,34 @@ async def main():
     logger.info("Clearing webhooks...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Google Sheets scheduler
+    # Instant-dispatch webhook (Google Sheets Apps Script -> here) — this is
+    # now the PRIMARY way new SEND orders get dispatched. Needs this service
+    # to be a Render Web Service (bound to $PORT), not a Background Worker.
+    if SHEET_WEBHOOK_SECRET:
+        try:
+            from core.webhook import create_webhook_app
+            webhook_app = create_webhook_app(bot)
+            runner = web.AppRunner(webhook_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", PORT)
+            await site.start()
+            logger.info(f"✅ Webhook server listening on 0.0.0.0:{PORT} (POST /webhook/sheet-edit)")
+        except Exception as e:
+            logger.error(f"Failed to start webhook server: {e}")
+    else:
+        logger.warning(
+            "SHEET_WEBHOOK_SECRET not set — instant dispatch webhook disabled. "
+            "Orders will only be picked up by the periodic poll."
+        )
+
+    # Google Sheets scheduler (safety net — see process_one_order docstring)
     if is_sheets_configured():
         try:
             from core.scheduler import check_sheets_job, send_daily_report_job, send_driver_reminders
 
-            # Minimal interval: 60 soniya (429 limit uchun)
+            # Now a safety net, not the primary dispatch path — the webhook
+            # handles new SEND orders instantly. Controlled by
+            # POLL_INTERVAL_SECONDS (render.yaml), minimum 60s.
             interval = max(POLL_INTERVAL_SECONDS, 60)
             logger.info(f"Starting scheduler (interval: {interval}s)...")
 

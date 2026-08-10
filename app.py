@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 import httpx
 import uvicorn
 from dotenv import load_dotenv
+from core.vehicle_durations import get_expected_duration
 
 load_dotenv()
 
@@ -194,25 +195,45 @@ def _sb_rows(table, params) -> list:
     except:
         return []
 
+def _parse_iso(s):
+    """Parse a Supabase timestamptz string into an Asia/Tashkent-aware datetime."""
+    if not s:
+        return None
+    try:
+        s2 = str(s).replace('Z', '+00:00')
+        dt = datetime.fromisoformat(s2)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TZ)
+    except Exception:
+        return None
+
+
 def get_driver_live_stages() -> dict:
     """
-    Returns {telegram_id(str): stage} for every driver with an active order,
-    where stage is 'YUK_ORTYAPTI' (accepted, still loading/prepping — the
-    order hasn't left yet) or 'YOLDA' (driver tapped "Yo'lga chiqdim" and is
-    actually en route). Drivers with no active order simply have no entry
-    here, i.e. they're free (BO'SH).
+    Returns {telegram_id(str): {...}} for every driver with an active order:
+      stage        'YUK_ORTYAPTI' (accepted, still loading/prepping) or
+                   'YOLDA' (driver tapped "Yo'lga chiqdim", en route)
+      order_id     the active order's id, for display
+      eta_minutes  estimated minutes until this car is free again (can be
+                   negative if it's running late), or None if this car
+                   isn't in the vehicle-duration reference table
+      eta_time     "HH:MM" estimated free-up clock time, or None
+
+    Drivers with no active order simply have no entry here (they're BO'SH).
 
     The Drivers Google Sheet only ever stores two coarse states (BO'SH /
-    YUK OGAN) — it's never updated when a driver actually departs. The real,
-    live per-order stage lives in Supabase (current_status), so that's the
-    source of truth for this 3-way split. Cached 8 seconds.
+    YUK OGAN) — it's never updated when a driver actually departs, and it
+    has no notion of expected duration at all. The real, live per-order
+    stage + timing lives in Supabase, so that's the source of truth for
+    this board. Cached 8 seconds.
     """
     cached = _cached("live_stages", ttl=8)
     if cached is not None:
         return cached
 
     rows = _sb_rows("orders", {
-        "select": "driver_telegram_id,current_status",
+        "select": "driver_telegram_id,current_status,order_id,car_number,accepted_at,created_at",
         "current_status": "not.in.(YAKUNLANDI,BEKOR_QILINDI,ESKI_YOPILDI,NEW)",
     })
 
@@ -221,14 +242,31 @@ def get_driver_live_stages() -> dict:
     # advanced (more informative) state.
     priority = {"YOLDA": 2, "YUK_ORTYAPTI": 1}
     stages = {}
+    now = datetime.now(TZ)
     for r in rows:
         tid = str(r.get('driver_telegram_id') or '').strip()
         if not tid:
             continue
         raw = (r.get('current_status') or '').strip().upper()
         stage = "YOLDA" if raw == "YOLDA" else "YUK_ORTYAPTI"
-        if tid not in stages or priority[stage] > priority[stages[tid]]:
-            stages[tid] = stage
+        if tid in stages and priority[stage] <= priority[stages[tid]['stage']]:
+            continue
+
+        anchor = _parse_iso(r.get('accepted_at')) or _parse_iso(r.get('created_at'))
+        eta_minutes, eta_time = None, None
+        expected = get_expected_duration(r.get('car_number') or '')
+        if anchor and expected:
+            _vehicle_type, minutes = expected
+            eta_dt = anchor + timedelta(minutes=minutes)
+            eta_minutes = int((eta_dt - now).total_seconds() / 60)
+            eta_time = eta_dt.strftime('%H:%M')
+
+        stages[tid] = {
+            "stage": stage,
+            "order_id": r.get('order_id') or '',
+            "eta_minutes": eta_minutes,
+            "eta_time": eta_time,
+        }
 
     _set("live_stages", stages)
     return stages
@@ -276,16 +314,23 @@ async def dashboard(request: Request):
 
     # 3-way live board: Bo'sh / Yuk ortyapti / Yo'lda — driven by Supabase's
     # real per-order status (live_stages), not the sheet's coarse 2-state
-    # column, so "Yo'lda" is actually accurate.
+    # column, so "Yo'lda" is actually accurate. Each car also gets an
+    # estimated free-up time/countdown from the vehicle-duration table.
     board = {"BOSH": [], "YUK_ORTYAPTI": [], "YOLDA": []}
     for car in cars:
-        stage = live_stages.get(car["telegram_id"], "") if car.get("telegram_id") else ""
-        if stage == "YOLDA":
-            board["YOLDA"].append(car)
-        elif stage == "YUK_ORTYAPTI":
-            board["YUK_ORTYAPTI"].append(car)
-        else:
+        info = live_stages.get(car["telegram_id"]) if car.get("telegram_id") else None
+        if not info:
             board["BOSH"].append(car)
+            continue
+
+        car["order_id"]    = info.get("order_id")
+        car["eta_minutes"] = info.get("eta_minutes")
+        car["eta_time"]    = info.get("eta_time")
+
+        if info["stage"] == "YOLDA":
+            board["YOLDA"].append(car)
+        else:
+            board["YUK_ORTYAPTI"].append(car)
 
     total = len(cars)
     free = len(board["BOSH"])

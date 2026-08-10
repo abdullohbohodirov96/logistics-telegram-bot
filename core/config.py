@@ -72,3 +72,8 @@ def is_sheets_configured():
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", "8000"))
+
+# Shared secret the Google Apps Script (onEdit trigger) must send so random
+# internet traffic can't trigger order dispatch. Set the same value in the
+# Apps Script and here (Render env var).
+SHEET_WEBHOOK_SECRET = os.getenv("SHEET_WEBHOOK_SECRET", "")

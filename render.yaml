@@ -1,5 +1,9 @@
 services:
-  - type: worker
+  # NOTE: type is "web", not "worker" — the bot needs to accept inbound
+  # HTTP for the instant Google Sheets webhook (core/webhook.py). It still
+  # runs the same aiogram long-polling loop as before, plus a tiny aiohttp
+  # server bound to $PORT alongside it (see main.py).
+  - type: web
     name: logistics-bot
     env: python
     buildCommand: pip install -r requirements.txt
@@ -23,7 +27,11 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: POLL_INTERVAL_SECONDS
-        value: "60"
+        value: "180"
+      # Shared secret with the Google Apps Script onEdit trigger — set this
+      # to a random string, and put the SAME string in the Apps Script.
+      - key: SHEET_WEBHOOK_SECRET
+        sync: false
 
   - type: web
     name: logistics-dashboard

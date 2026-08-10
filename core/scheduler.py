@@ -9,7 +9,10 @@ from core.sheets import (
     update_driver_status_sheet, remove_order_from_driver_sheet,
     write_driver_order_count_to_orders_sheet, write_order_result_note
 )
-from core.db import create_order, get_order, update_order, archive_duplicate_order_id
+from core.db import (
+    create_order, get_order, update_order, archive_duplicate_order_id,
+    get_active_orders_count, get_driver_sent_orders_count,
+)
 import core.keyboards as kb
 from core.utils import normalize_car_number
 from core.config import ADMIN_IDS
@@ -85,12 +88,252 @@ async def _notify_admins_tg_failure(bot: Bot, order_id, driver, car_number, tg_e
 
 # ─── 1. Check all branches for new orders ────────────────────────────────────
 
+async def process_one_order(bot: Bot, branch_name: str, sheet_name: str, group_id, order: dict, drivers: dict):
+    """
+    Process ONE sheet row whose status is 'SEND': validate it, find the
+    driver, dispatch the Telegram message, and update DB/sheets accordingly.
+
+    Shared by the periodic safety-net poll (check_sheets_job) AND the
+    instant webhook handler (core/webhook.py, triggered the moment a
+    dispatcher flips a row's status to SEND in Google Sheets) — so there's
+    exactly one implementation of the dispatch logic, not two copies that
+    could quietly drift out of sync.
+    """
+    order_id = order['order_id']
+    if order_id in PROCESSED_ORDERS:
+        logger.info(f"⏭ Skipping #{order_id} (already processed in memory).")
+        return
+
+    if not order_id or not order['car_number']:
+        logger.error(f"❌ Bo'sh qator: ID='{order_id}' car='{order['car_number']}' (row {order['row_index']}).")
+        await asyncio.to_thread(update_order_status, order['row_index'], 'QATOR_BOSH', sheet_name)
+        await asyncio.to_thread(
+            write_order_result_note, order['row_index'],
+            "❌ Bu qatorda ID yoki mashina raqami bo'sh. Sheetda shu qatorni tekshiring "
+            "va to'ldiring, keyin ustunni 'SEND'ga qaytaring.", sheet_name
+        )
+        if order_id:
+            PROCESSED_ORDERS[order_id] = True
+        return
+
+    try:
+        logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
+
+        # Check DB — if this order ID was used before, decide what to do:
+        #  - old order is FINISHED/CANCELLED  -> ID was just recycled by the
+        #    sheet; archive the old row (frees the unique order_id) and
+        #    proceed to send this as a brand-new order, with a warning note.
+        #  - old order is still ACTIVE          -> a second dispatch under the
+        #    same ID right now would collide with an in-progress delivery,
+        #    so keep holding it and warn instead of silently double-sending.
+        db_order = await asyncio.to_thread(get_order, order_id)
+        if db_order and db_order.get('current_status') not in ('NEW', None, ''):
+            existing_status = db_order.get('current_status', '?')
+
+            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI', 'ESKI_YOPILDI'):
+                archived_id = await asyncio.to_thread(
+                    archive_duplicate_order_id, db_order.get('id'), order_id
+                )
+                logger.warning(
+                    f"⚠️ #{order_id} ID avval ishlatilgan (holat: {existing_status}). "
+                    f"Eski yozuv arxivlandi ({archived_id}); yangi buyurtma sifatida yuborilmoqda."
+                )
+                await asyncio.to_thread(
+                    write_order_result_note, order['row_index'],
+                    f"⚠️ Diqqat: bu ID avval ham ishlatilgan (holat: {existing_status}). "
+                    f"Baribir yangi buyurtma sifatida yuborildi.", sheet_name
+                )
+                db_order = None  # fall through to create_order below
+            else:
+                logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
+                await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
+                await asyncio.to_thread(
+                    write_order_result_note, order['row_index'],
+                    f"⚠️ Diqqat: bu ID hozir faol buyurtmada ishlatilmoqda (holat: {existing_status}). "
+                    f"Tekshiring — yuborilmadi.", sheet_name
+                )
+                # Only mark processed after the sheet actually reflects it —
+                # otherwise a failed write (e.g. Sheets 429) would freeze this
+                # row forever with a stale 'SEND' status and no explanation.
+                PROCESSED_ORDERS[order_id] = True
+                return
+
+        # Create in DB if missing
+        # NOTE: filial is NOT included here — it's saved later via update_order
+        # which validates column existence. Direct insert would fail if column missing.
+        if not db_order:
+            ok = await asyncio.to_thread(create_order, {
+                'order_id':       order_id,
+                'car_number':     normalize_car_number(order['car_number']),
+                'address':        order['address'],
+                'cargo':          order['cargo'],
+                'comment':        order['comment'],
+                'current_status': 'NEW'
+            })
+            if not ok:
+                # Re-check: maybe it was created by a parallel run
+                db_order = await asyncio.to_thread(get_order, order_id)
+                if not db_order:
+                    logger.error(f"❌ #{order_id} could not be created in DB. Skipping.")
+                    await asyncio.to_thread(
+                        write_order_result_note, order['row_index'],
+                        "❌ Buyurtmani bazaga yozib bo'lmadi (Supabase xatosi). "
+                        "Nima qilish kerak: internet/DB holatini tekshiring va statusni "
+                        "qayta 'SEND' qiling — avtomatik qayta urinib ko'riladi.", sheet_name
+                    )
+                    PROCESSED_ORDERS[order_id] = True
+                    return
+
+        car_number = normalize_car_number(order['car_number'])
+        driver = drivers.get(car_number)
+
+        if not driver:
+            logger.error(f"❌ Driver not found for car '{car_number}' (#{order_id}).")
+            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_TOPILMADI', sheet_name)
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"❌ '{car_number}' mashina raqami haydovchilar jadvalida topilmadi. "
+                f"Nima qilish kerak: haydovchilar jadvaliga shu mashina raqamini qo'shing "
+                f"(A ustun) yoki bu yerdagi raqamni to'g'rilang, keyin qayta 'SEND' qiling.", sheet_name
+            )
+            PROCESSED_ORDERS[order_id] = True
+            return
+
+        telegram_id = driver['telegram_id']
+        if not telegram_id:
+            logger.error(f"❌ No Telegram ID for driver '{driver.get('driver_name')}'.")
+            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_ID_YOQ', sheet_name)
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"❌ {driver.get('driver_name', car_number)} uchun Telegram ID kiritilmagan. "
+                f"Nima qilish kerak: haydovchilar jadvalida shu haydovchining Telegram ID "
+                f"ustunini to'ldiring, keyin qayta 'SEND' qiling.", sheet_name
+            )
+            PROCESSED_ORDERS[order_id] = True
+            return
+
+        # Check max 3 active orders
+        active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
+        if active_count >= 3:
+            logger.warning(f"⚠️ [{car_number}] has {active_count} active orders (max 3). Skipping #{order_id}.")
+            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_BAND', sheet_name)
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"⛔ {driver.get('driver_name', car_number)} da allaqachon {active_count} ta aktiv buyurtma bor (max 3). "
+                f"Nima qilish kerak: bu buyurtma avtomatik qayta yuborilmaydi — haydovchi "
+                f"bo'shagach yoki boshqa haydovchiga berish uchun status ustunini qayta 'SEND' qiling.", sheet_name
+            )
+            PROCESSED_ORDERS[order_id] = True
+            return
+
+        # ── Sequential acceptance check ──────────────────────────
+        # Don't send new order if driver has any unaccepted (SENT) orders
+        sent_count = await asyncio.to_thread(get_driver_sent_orders_count, telegram_id)
+        if sent_count > 0:
+            logger.warning(
+                f"⚠️ [{car_number}] has {sent_count} unaccepted SENT order(s). "
+                f"Holding #{order_id} until they accept pending orders."
+            )
+            # Write reason to sheet so admin sees why — status stays SEND for retry
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"⏳ Kutilmoqda — {driver.get('driver_name', car_number)} avvalgi buyurtmani hali qabul qilmagan", sheet_name
+            )
+            # Do NOT add to PROCESSED_ORDERS — retry next cycle
+            return
+
+        # Build driver message — no filial shown
+        active_note = (
+            f"\n\n⚠️ *Diqqat: sizda allaqachon {active_count} ta aktiv buyurtma bor!*"
+            if active_count > 0 else ""
+        )
+        msg_text = (
+            f"🆕 *YANGI BUYURTMA!*\n\n"
+            f"🆔 *ID:* {order_id}\n"
+            f"📍 *Manzil:* {order['address']}\n"
+            f"📦 *Yuk:* {order['cargo']}\n"
+            f"📝 *Izoh:* {order['comment']}"
+            f"{active_note}"
+        )
+
+        try:
+            await bot.send_message(
+                chat_id=telegram_id,
+                text=msg_text,
+                parse_mode="Markdown",
+                reply_markup=kb.get_take_delivery_kb(order_id)
+            )
+            logger.info(f"✉️ #{order_id} sent to {driver.get('driver_name')} (TID: {telegram_id}).")
+        except Exception as tg_err:
+            logger.error(f"❌ Failed to send to {telegram_id}: {tg_err}")
+            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_XATOSI', sheet_name)
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err}). "
+                f"Nima qilish kerak: agar 'bot was blocked' bo'lsa — haydovchiga botni "
+                f"qayta /start bosishini ayting, keyin qayta 'SEND' qiling; aks holda "
+                f"Telegram ID to'g'riligini tekshiring.", sheet_name
+            )
+            await _notify_admins_tg_failure(bot, order_id, driver, car_number, tg_err)
+            PROCESSED_ORDERS[order_id] = True
+            return
+
+        # Update DB to SENT with driver info
+        # branch_name is kept in _ORDER_BRANCH (in-memory) since
+        # Supabase orders table may not have a filial column yet
+        await asyncio.to_thread(update_order, order_id, {
+            'current_status':     'SENT',
+            'driver_telegram_id': str(telegram_id),
+            'driver_name':        driver.get('driver_name', ''),
+        })
+        _ORDER_BRANCH[order_id] = branch_name
+
+        # Update sheets — clear any previous "waiting" note
+        await asyncio.sleep(1)
+        await asyncio.to_thread(update_order_status, order['row_index'], 'SENT', sheet_name)
+        await asyncio.to_thread(write_order_result_note, order['row_index'], '', sheet_name)
+
+        await asyncio.sleep(1)
+        await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
+
+        await asyncio.sleep(1)
+        new_active_count = active_count + 1
+        await asyncio.to_thread(write_driver_order_count_to_orders_sheet, order_id, new_active_count)
+
+        PROCESSED_ORDERS[order_id] = True
+
+        # Group interim report — group_id = branch_cfg ning guruh ID si
+        # (qaysi sheets sahifasidan kelgan, o'sha filialning guruhi)
+        from core.handlers.delivery import update_group_report
+        await update_group_report(bot, order_id, override_group_id=group_id)
+
+    except Exception as e:
+        logger.error(f"❌ Error processing #{order_id}: {e}")
+        # Best-effort: always leave a visible reason on the sheet so a
+        # stuck 'SEND' row is never silent. Don't mark PROCESSED_ORDERS
+        # here — an unexpected/transient error (e.g. Sheets 429) should
+        # be retried on the next cycle, not frozen forever.
+        try:
+            await asyncio.to_thread(
+                write_order_result_note, order['row_index'],
+                f"❌ Ichki xatolik: {e}. Tizim keyingi tekshiruvda avtomatik qayta "
+                f"urinadi; bir necha marta takrorlansa, dasturchiga xabar bering.", sheet_name
+            )
+        except Exception as note_err:
+            logger.error(f"❌ Also failed to write fallback note for #{order_id}: {note_err}")
+
+
+# ─── 1. Check all branches for new orders (safety-net poll) ─────────────────
+
 async def check_sheets_job(bot: Bot):
     """
     Polls all branch sheets for new orders.
     - Uses asyncio.Lock() to prevent overlap.
-    - Checks driver has no pending unaccepted (SENT) orders before sending new one.
-    - Updates DB status to SENT when order is dispatched to driver.
+    - This is now a SAFETY NET, not the primary dispatch path — the webhook
+      (core/webhook.py) reacts the instant a row is set to SEND. This job
+      still runs periodically to catch anything the webhook missed (Apps
+      Script misfire, deploy in progress, etc.), so nothing gets silently
+      stuck if the push notification doesn't arrive.
     """
     if _job_lock.locked():
         logger.warning("[SCHEDULER] Previous job still running, skipping this tick.")
@@ -99,7 +342,6 @@ async def check_sheets_job(bot: Bot):
     async with _job_lock:
         try:
             from core.config import BRANCHES
-            from core.db import get_active_orders_count, get_driver_sent_orders_count
             drivers = await asyncio.to_thread(get_drivers)
 
             for branch_idx, (branch_name, branch_cfg) in enumerate(BRANCHES.items()):
@@ -122,228 +364,7 @@ async def check_sheets_job(bot: Bot):
                 logger.info(f"📝 [{branch_name}] Found {len(new_orders)} new orders.")
 
                 for order in new_orders:
-                    order_id = order['order_id']
-                    if order_id in PROCESSED_ORDERS:
-                        logger.info(f"⏭ Skipping #{order_id} (already processed in memory).")
-                        continue
-
-                    if not order_id or not order['car_number']:
-                        logger.error(f"❌ Bo'sh qator: ID='{order_id}' car='{order['car_number']}' (row {order['row_index']}).")
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'QATOR_BOSH', sheet_name)
-                        await asyncio.to_thread(
-                            write_order_result_note, order['row_index'],
-                            "❌ Bu qatorda ID yoki mashina raqami bo'sh. Sheetda shu qatorni tekshiring "
-                            "va to'ldiring, keyin ustunni 'SEND'ga qaytaring.", sheet_name
-                        )
-                        if order_id:
-                            PROCESSED_ORDERS[order_id] = True
-                        continue
-
-                    try:
-                        logger.info(f"⚙️ [{branch_name}] Processing #{order_id} for car {order['car_number']}...")
-
-                        # Check DB — if this order ID was used before, decide what to do:
-                        #  - old order is FINISHED/CANCELLED  -> ID was just recycled by the
-                        #    sheet; archive the old row (frees the unique order_id) and
-                        #    proceed to send this as a brand-new order, with a warning note.
-                        #  - old order is still ACTIVE          -> a second dispatch under the
-                        #    same ID right now would collide with an in-progress delivery,
-                        #    so keep holding it and warn instead of silently double-sending.
-                        db_order = await asyncio.to_thread(get_order, order_id)
-                        if db_order and db_order.get('current_status') not in ('NEW', None, ''):
-                            existing_status = db_order.get('current_status', '?')
-
-                            if existing_status in ('YAKUNLANDI', 'BEKOR_QILINDI', 'ESKI_YOPILDI'):
-                                archived_id = await asyncio.to_thread(
-                                    archive_duplicate_order_id, db_order.get('id'), order_id
-                                )
-                                logger.warning(
-                                    f"⚠️ #{order_id} ID avval ishlatilgan (holat: {existing_status}). "
-                                    f"Eski yozuv arxivlandi ({archived_id}); yangi buyurtma sifatida yuborilmoqda."
-                                )
-                                await asyncio.to_thread(
-                                    write_order_result_note, order['row_index'],
-                                    f"⚠️ Diqqat: bu ID avval ham ishlatilgan (holat: {existing_status}). "
-                                    f"Baribir yangi buyurtma sifatida yuborildi.", sheet_name
-                                )
-                                db_order = None  # fall through to create_order below
-                            else:
-                                logger.info(f"⏭ #{order_id} already in DB (status={existing_status}). Skipping.")
-                                await asyncio.to_thread(update_order_status, order['row_index'], 'ALLAQACHON_BOR', sheet_name)
-                                await asyncio.to_thread(
-                                    write_order_result_note, order['row_index'],
-                                    f"⚠️ Diqqat: bu ID hozir faol buyurtmada ishlatilmoqda (holat: {existing_status}). "
-                                    f"Tekshiring — yuborilmadi.", sheet_name
-                                )
-                                # Only mark processed after the sheet actually reflects it —
-                                # otherwise a failed write (e.g. Sheets 429) would freeze this
-                                # row forever with a stale 'SEND' status and no explanation.
-                                PROCESSED_ORDERS[order_id] = True
-                                continue
-
-                        # Create in DB if missing
-                        # NOTE: filial is NOT included here — it's saved later via update_order
-                        # which validates column existence. Direct insert would fail if column missing.
-                        if not db_order:
-                            ok = await asyncio.to_thread(create_order, {
-                                'order_id':       order_id,
-                                'car_number':     normalize_car_number(order['car_number']),
-                                'address':        order['address'],
-                                'cargo':          order['cargo'],
-                                'comment':        order['comment'],
-                                'current_status': 'NEW'
-                            })
-                            if not ok:
-                                # Re-check: maybe it was created by a parallel run
-                                db_order = await asyncio.to_thread(get_order, order_id)
-                                if not db_order:
-                                    logger.error(f"❌ #{order_id} could not be created in DB. Skipping.")
-                                    await asyncio.to_thread(
-                                        write_order_result_note, order['row_index'],
-                                        "❌ Buyurtmani bazaga yozib bo'lmadi (Supabase xatosi). "
-                                        "Nima qilish kerak: internet/DB holatini tekshiring va statusni "
-                                        "qayta 'SEND' qiling — avtomatik qayta urinib ko'riladi.", sheet_name
-                                    )
-                                    PROCESSED_ORDERS[order_id] = True
-                                    continue
-
-                        car_number = normalize_car_number(order['car_number'])
-                        driver = drivers.get(car_number)
-
-                        if not driver:
-                            logger.error(f"❌ Driver not found for car '{car_number}' (#{order_id}).")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_TOPILMADI', sheet_name)
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"❌ '{car_number}' mashina raqami haydovchilar jadvalida topilmadi. "
-                                f"Nima qilish kerak: haydovchilar jadvaliga shu mashina raqamini qo'shing "
-                                f"(A ustun) yoki bu yerdagi raqamni to'g'rilang, keyin qayta 'SEND' qiling.", sheet_name
-                            )
-                            PROCESSED_ORDERS[order_id] = True
-                            continue
-
-                        telegram_id = driver['telegram_id']
-                        if not telegram_id:
-                            logger.error(f"❌ No Telegram ID for driver '{driver.get('driver_name')}'.")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_ID_YOQ', sheet_name)
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"❌ {driver.get('driver_name', car_number)} uchun Telegram ID kiritilmagan. "
-                                f"Nima qilish kerak: haydovchilar jadvalida shu haydovchining Telegram ID "
-                                f"ustunini to'ldiring, keyin qayta 'SEND' qiling.", sheet_name
-                            )
-                            PROCESSED_ORDERS[order_id] = True
-                            continue
-
-                        # Check max 3 active orders
-                        active_count = await asyncio.to_thread(get_active_orders_count, telegram_id)
-                        if active_count >= 3:
-                            logger.warning(f"⚠️ [{car_number}] has {active_count} active orders (max 3). Skipping #{order_id}.")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'XAYDOVCHI_BAND', sheet_name)
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"⛔ {driver.get('driver_name', car_number)} da allaqachon {active_count} ta aktiv buyurtma bor (max 3). "
-                                f"Nima qilish kerak: bu buyurtma avtomatik qayta yuborilmaydi — haydovchi "
-                                f"bo'shagach yoki boshqa haydovchiga berish uchun status ustunini qayta 'SEND' qiling.", sheet_name
-                            )
-                            PROCESSED_ORDERS[order_id] = True
-                            continue
-
-                        # ── Sequential acceptance check ──────────────────────────
-                        # Don't send new order if driver has any unaccepted (SENT) orders
-                        sent_count = await asyncio.to_thread(get_driver_sent_orders_count, telegram_id)
-                        if sent_count > 0:
-                            logger.warning(
-                                f"⚠️ [{car_number}] has {sent_count} unaccepted SENT order(s). "
-                                f"Holding #{order_id} until they accept pending orders."
-                            )
-                            # Write reason to sheet so admin sees why — status stays SEND for retry
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"⏳ Kutilmoqda — {driver.get('driver_name', car_number)} avvalgi buyurtmani hali qabul qilmagan", sheet_name
-                            )
-                            # Do NOT add to PROCESSED_ORDERS — retry next cycle
-                            continue
-
-                        # Build driver message — no filial shown
-                        active_note = (
-                            f"\n\n⚠️ *Diqqat: sizda allaqachon {active_count} ta aktiv buyurtma bor!*"
-                            if active_count > 0 else ""
-                        )
-                        msg_text = (
-                            f"🆕 *YANGI BUYURTMA!*\n\n"
-                            f"🆔 *ID:* {order_id}\n"
-                            f"📍 *Manzil:* {order['address']}\n"
-                            f"📦 *Yuk:* {order['cargo']}\n"
-                            f"📝 *Izoh:* {order['comment']}"
-                            f"{active_note}"
-                        )
-
-                        try:
-                            await bot.send_message(
-                                chat_id=telegram_id,
-                                text=msg_text,
-                                parse_mode="Markdown",
-                                reply_markup=kb.get_take_delivery_kb(order_id)
-                            )
-                            logger.info(f"✉️ #{order_id} sent to {driver.get('driver_name')} (TID: {telegram_id}).")
-                        except Exception as tg_err:
-                            logger.error(f"❌ Failed to send to {telegram_id}: {tg_err}")
-                            await asyncio.to_thread(update_order_status, order['row_index'], 'TELEGRAM_XATOSI', sheet_name)
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"❌ Telegram xatosi: haydovchiga xabar yuborib bo'lmadi ({tg_err}). "
-                                f"Nima qilish kerak: agar 'bot was blocked' bo'lsa — haydovchiga botni "
-                                f"qayta /start bosishini ayting, keyin qayta 'SEND' qiling; aks holda "
-                                f"Telegram ID to'g'riligini tekshiring.", sheet_name
-                            )
-                            await _notify_admins_tg_failure(bot, order_id, driver, car_number, tg_err)
-                            PROCESSED_ORDERS[order_id] = True
-                            continue
-
-                        # Update DB to SENT with driver info
-                        # branch_name is kept in _ORDER_BRANCH (in-memory) since
-                        # Supabase orders table may not have a filial column yet
-                        await asyncio.to_thread(update_order, order_id, {
-                            'current_status':     'SENT',
-                            'driver_telegram_id': str(telegram_id),
-                            'driver_name':        driver.get('driver_name', ''),
-                        })
-                        _ORDER_BRANCH[order_id] = branch_name
-
-                        # Update sheets — clear any previous "waiting" note
-                        await asyncio.sleep(1)
-                        await asyncio.to_thread(update_order_status, order['row_index'], 'SENT', sheet_name)
-                        await asyncio.to_thread(write_order_result_note, order['row_index'], '', sheet_name)
-
-                        await asyncio.sleep(1)
-                        await asyncio.to_thread(update_driver_status_sheet, car_number, 'YUK OGAN', order_id)
-
-                        await asyncio.sleep(1)
-                        new_active_count = active_count + 1
-                        await asyncio.to_thread(write_driver_order_count_to_orders_sheet, order_id, new_active_count)
-
-                        PROCESSED_ORDERS[order_id] = True
-
-                        # Group interim report — group_id = branch_cfg ning guruh ID si
-                        # (qaysi sheets sahifasidan kelgan, o'sha filialning guruhi)
-                        from core.handlers.delivery import update_group_report
-                        await update_group_report(bot, order_id, override_group_id=group_id)
-
-                    except Exception as e:
-                        logger.error(f"❌ Error processing #{order_id}: {e}")
-                        # Best-effort: always leave a visible reason on the sheet so a
-                        # stuck 'SEND' row is never silent. Don't mark PROCESSED_ORDERS
-                        # here — an unexpected/transient error (e.g. Sheets 429) should
-                        # be retried on the next cycle, not frozen forever.
-                        try:
-                            await asyncio.to_thread(
-                                write_order_result_note, order['row_index'],
-                                f"❌ Ichki xatolik: {e}. Tizim keyingi tekshiruvda avtomatik qayta "
-                                f"urinadi; bir necha marta takrorlansa, dasturchiga xabar bering.", sheet_name
-                            )
-                        except Exception as note_err:
-                            logger.error(f"❌ Also failed to write fallback note for #{order_id}: {note_err}")
+                    await process_one_order(bot, branch_name, sheet_name, group_id, order, drivers)
 
         except Exception as e:
             logger.error(f"❌ Critical error in check_sheets_job: {e}")

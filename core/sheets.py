@@ -126,6 +126,60 @@ def get_new_orders(sheet_name=None):
         return []
 
 
+def get_order_row(sheet_name: str, row_index: int):
+    """
+    Read a SINGLE row from an orders sheet by its row number — used by the
+    instant webhook (core/webhook.py) so reacting to one edited cell doesn't
+    require re-reading the entire sheet (get_new_orders does a full-sheet
+    get_all_values(), which is fine once a minute but wasteful per-edit).
+
+    Returns the same shape as get_new_orders()'s items, or None if the row
+    doesn't have status == SEND (someone may have already handled it, or
+    the edit wasn't actually a SEND) or doesn't exist.
+    """
+    client = get_gspread_client()
+    if not client:
+        return None
+    target_sheet = sheet_name or ORDERS_SHEET_NAME
+    try:
+        def _read():
+            sh = client.open_by_key(GOOGLE_SHEET_ID)
+            worksheet = sh.worksheet(target_sheet)
+            headers = worksheet.row_values(1)
+            row = worksheet.row_values(row_index)
+            return headers, row
+
+        headers, row = _retry(_read)
+        if not headers or not row:
+            return None
+
+        id_idx      = fuzzy_match_header(headers, ['id', 'order_id', 'id_order'])
+        car_idx     = fuzzy_match_header(headers, ['car', 'car_number', 'mashina', 'moshina'])
+        addr_idx    = fuzzy_match_header(headers, ['address', 'manzil'])
+        cargo_idx   = fuzzy_match_header(headers, ['cargo', 'yuk'])
+        status_idx  = fuzzy_match_header(headers, ['status', 'holat'])
+        comment_idx = fuzzy_match_header(headers, ['comment', 'izoh'])
+
+        status_val = row[status_idx].strip() if len(row) > status_idx >= 0 else ""
+        if status_val.upper() != "SEND":
+            return None
+
+        order_id = row[id_idx].strip() if id_idx >= 0 and len(row) > id_idx else f"row_{row_index}"
+        return {
+            'row_index':  row_index,
+            'order_id':   order_id,
+            'car_number': normalize_car_number(row[car_idx]) if car_idx >= 0 and len(row) > car_idx else "",
+            'address':    row[addr_idx] if addr_idx >= 0 and len(row) > addr_idx else "-",
+            'cargo':      row[cargo_idx] if cargo_idx >= 0 and len(row) > cargo_idx else "",
+            'comment':    row[comment_idx] if comment_idx >= 0 and len(row) > comment_idx else "",
+            'sheet_name': target_sheet,
+        }
+    except Exception as e:
+        logger.error(f"Error get_order_row (sheet={target_sheet}, row={row_index}): {e}")
+        return None
+
+
+
 _DRIVERS_CACHE = {}
 _DRIVERS_CACHE_TIME = 0
 

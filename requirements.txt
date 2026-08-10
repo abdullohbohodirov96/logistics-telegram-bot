@@ -12,3 +12,4 @@ fastapi
 uvicorn
 jinja2
 gspread
+aiohttp
