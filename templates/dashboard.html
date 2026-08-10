@@ -181,7 +181,8 @@
         .row-cn { font-weight: 900; font-size: clamp(13px, 1.1vw, 18px); letter-spacing: .5px; }
         .row-vt { font-size: clamp(9px, .75vw, 11px); color: #e97609; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
         .row-dn { font-size: clamp(10px, .85vw, 13px); color: #999; }
-        .row-rayon { font-size: clamp(9px, .75vw, 11px); color: #6aa9ff; margin-top: 1px; }
+        .row-rayon { font-size: clamp(9px, .75vw, 11px); color: #6aa9ff; margin-top: 1px; text-decoration: none; display: block; }
+        .row-rayon:hover { text-decoration: underline; }
         .row-r { text-align: right; }
         .row-o { font-size: clamp(10px, .85vw, 13px); color: #777; font-weight: 700; }
         .row-eta { font-size: clamp(9px, .8vw, 12px); color: #aaa; font-weight: 700; margin-top: 2px; white-space: nowrap; }
@@ -247,7 +248,7 @@
                     <div class="col-list">
                         {% for d in board.BOSH %}
                         <div class="row-c" data-car="{{ d.car_number|upper }}" data-type="{{ (d.vehicle_type or '')|upper }}">
-                            <div><div class="row-cn">{{ d.car_number }}</div>{% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}<div class="row-dn">{{ d.driver_name }}</div>{% if d.rayon %}<div class="row-rayon">📍 {{ d.rayon }}</div>{% endif %}</div>
+                            <div><div class="row-cn">{{ d.car_number }}</div>{% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}<div class="row-dn">{{ d.driver_name }}</div>{% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}</div>
                             <div class="row-r">
                                 {% if d.idle_minutes is not none %}
                                     <div class="row-eta row-eta-free">🕐 {{ d.idle_minutes }} daq bo'sh</div>
@@ -268,7 +269,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<div class="row-rayon">📍 {{ d.rayon }}</div>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
@@ -294,7 +295,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<div class="row-rayon">📍 {{ d.rayon }}</div>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
@@ -320,7 +321,7 @@
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 {% if d.vehicle_type %}<div class="row-vt">{{ d.vehicle_type }}</div>{% endif %}
                                 <div class="row-dn">{{ d.driver_name }}</div>
-                                {% if d.rayon %}<div class="row-rayon">📍 {{ d.rayon }}</div>{% endif %}
+                                {% if d.rayon %}<a class="row-rayon" href="https://maps.google.com/?q={{ d.gps_lat }},{{ d.gps_lng }}" target="_blank" rel="noopener">📍 {{ d.rayon }}</a>{% endif %}
                             </div>
                             <div class="row-r">
                                 {% if d.order_id %}<div class="row-o">#{{ d.order_id }}</div>{% endif %}

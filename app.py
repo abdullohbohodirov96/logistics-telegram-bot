@@ -579,7 +579,13 @@ _TASHKENT_DISTRICTS = {
 # Rough bounding box around Tashkent CITY only — the nearest-district
 # fallback should never fire for a car out in the region (Toshkent
 # viloyati), where "nearest city tuman" would just be wrong.
-_TASHKENT_CITY_BBOX = (41.15, 41.42, 69.05, 69.42)  # (min_lat, max_lat, min_lng, max_lng)
+# Tightened to roughly match the actual spread of the 12 district centers
+# above (+ a small buffer) rather than a loose city-wide guess — a loose
+# box was accidentally swallowing points that are legitimately OUTSIDE
+# the city (like the shop itself, which is genuinely in the regional
+# "Toshkent tumani", not one of the 12 city districts) and mislabeling
+# them with the nearest city tuman instead of leaving them alone.
+_TASHKENT_CITY_BBOX = (41.16, 41.39, 69.15, 69.37)  # (min_lat, max_lat, min_lng, max_lng)
 
 
 def _nearest_tashkent_district(lat, lng):
@@ -658,12 +664,20 @@ def get_rayon(lat, lng):
                 street = by_kind.get("street")
                 locality = by_kind.get("locality")
 
-                if not district:
-                    # Yandex didn't tag a district for this exact point —
-                    # fall back to whichever of Tashkent's 12 city tumans is
-                    # geographically closest, instead of just showing the
-                    # bare city name.
-                    district = _nearest_tashkent_district(lat, lng)
+                # Yandex's "Toshkent tumani" is a REGIONAL district (the
+                # rural one south/east of the city, where the shop itself
+                # happens to sit) — but its Uzbekistan data applies that
+                # same label too broadly, even to streets clearly inside
+                # Tashkent CITY's own 12 districts (Yunusobod, Chilonzor,
+                # Sergeli, etc). So it's treated the same as "no district
+                # at all": prefer our own nearest-city-tuman match instead,
+                # whenever the point actually falls within city bounds. If
+                # it doesn't (a genuinely regional point), the nearest-tuman
+                # lookup returns None and Yandex's own answer is kept.
+                if not district or district == "Toshkent tumani":
+                    fallback = _nearest_tashkent_district(lat, lng)
+                    if fallback:
+                        district = fallback
 
                 parts = [p for p in (district or locality, street) if p]
                 rayon = ", ".join(parts) if parts else None
@@ -859,7 +873,16 @@ async def dashboard(request: Request):
     for car in cars:
         car["vehicle_type"] = get_vehicle_type(car.get("car_number") or "")
         pos = wialon_positions.get(_normalize_plate(car.get("car_number") or ""))
-        car["rayon"] = get_rayon(pos["lat"], pos["lng"]) if pos else None
+        if pos:
+            car["rayon"] = get_rayon(pos["lat"], pos["lng"])
+            # Kept alongside the text so the dashboard can link the rayon
+            # straight to a live map pin at the car's last known position.
+            car["gps_lat"] = pos["lat"]
+            car["gps_lng"] = pos["lng"]
+        else:
+            car["rayon"] = None
+            car["gps_lat"] = None
+            car["gps_lng"] = None
 
     # 4-way live board: Bo'sh / Yuk ortyapti / Yo'lda / Do'konga qaytyapti —
     # driven by Supabase's real per-order status (live_stages), not the
