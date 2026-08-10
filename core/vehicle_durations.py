@@ -85,3 +85,9 @@ VEHICLE_DURATIONS = {
 def get_expected_duration(car_number: str):
     """Returns (vehicle_type, expected_minutes) or None if this car isn't in the table."""
     return VEHICLE_DURATIONS.get(_normalize(car_number))
+
+
+def get_vehicle_type(car_number: str):
+    """Returns just the vehicle type string (e.g. 'GAZEL', 'LABO') or None."""
+    entry = VEHICLE_DURATIONS.get(_normalize(car_number))
+    return entry[0] if entry else None

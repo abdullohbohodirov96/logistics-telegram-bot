@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 import httpx
 import uvicorn
 from dotenv import load_dotenv
-from core.vehicle_durations import get_expected_duration
+from core.vehicle_durations import get_expected_duration, get_vehicle_type
 
 load_dotenv()
 
@@ -448,6 +448,12 @@ async def dashboard(request: Request):
     sb = get_supabase_stats()
     live_stages = get_driver_live_stages()
     problem_orders = sheets_read_problem_orders()
+
+    # Tag every car with its vehicle type (GAZEL / LABO / DAMAS / CHANGAN...)
+    # from the reference table, so it's visible on the board and matchable
+    # by the search box (e.g. typing "gazel" filters to just Gazels).
+    for car in cars:
+        car["vehicle_type"] = get_vehicle_type(car.get("car_number") or "")
 
     # 3-way live board: Bo'sh / Yuk ortyapti / Yo'lda — driven by Supabase's
     # real per-order status (live_stages), not the sheet's coarse 2-state
