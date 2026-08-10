@@ -766,7 +766,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 delivered_address = reverse_geocode(d_lat, d_lng)
                 location_line = f"📍 **Yetkazilgan lokatsiya:** [Google Maps]({maps_url})"
                 if delivered_address:
-                    location_line = f"📍 **Yetkazilgan manzil:** {delivered_address}\n📍 [Google Maps]({maps_url})"
+                    location_line = f"📍 **Rayon:** {delivered_address}\n📍 [Google Maps]({maps_url})"
 
                 # Yuk tushirilgan joydan do'konga taxminan qancha vaqtda
                 # qaytishi mumkinligi (haqiqiy yo'l masofasiga taxminiy
