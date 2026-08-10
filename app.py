@@ -32,9 +32,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID") or os.getenv("GOOGLE_SHEET_ID", "")
 DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers")
 ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders")
-QORASAROY_ORDERS_SHEET_NAME = os.getenv("QORASAROY_ORDERS_SHEET_NAME", "Qorasaroy orders")
-# All branch order sheets to scan for problem rows (dedup, keep order stable).
-ORDERS_SHEETS = list(dict.fromkeys([ORDERS_SHEET_NAME, QORASAROY_ORDERS_SHEET_NAME]))
+# Qorasaroy filiali olib tashlandi — endi bitta orders sheet bor. List holida
+# qoldirilgan (kelajakda yana filial qo'shilsa, shunchaki shu ro'yxatga
+# qo'shiladi) — sheets_read_problem_orders() shu ustidan generik ishlaydi.
+ORDERS_SHEETS = list(dict.fromkeys([ORDERS_SHEET_NAME]))
 TZ = timezone(timedelta(hours=5))  # Asia/Tashkent
 
 # "Dunyabunya" shop/warehouse fixed location — every driver returns here

@@ -17,8 +17,7 @@ DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers").strip()
 ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders").strip()
 
 # Telegram Group IDs
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")                          # Shiribod (asosiy) guruh
-QORASAROY_GROUP_CHAT_ID = os.getenv("QORASAROY_GROUP_CHAT_ID", "") # Qorasaroy guruh
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")                          # Asosiy guruh
 
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
 
@@ -39,16 +38,16 @@ if service_account_json_str:
     except json.JSONDecodeError:
         logger.error("GOOGLE_CREDENTIALS_JSON is not a valid JSON string.")
 
-# ── Multi-branch (filial) configuration ───────────────────────────────────────
-# drivers sheet G ustunidagi "filial" nomi bo'yicha guruh va orders sheet aniqlanadi
+# ── Branch configuration ───────────────────────────────────────────────────
+# Qorasaroy filiali olib tashlandi (2026-08) — endi HAMMASI bitta "orders"
+# sheetga yoziladi, bitta guruhga jo'natiladi. BRANCHES tuzilishi shunday
+# qoldirilgan (bitta yozuv bilan) chunki scheduler.py/webhook.py/admin.py
+# hammasi shu dict ustidan umumiy tarzda ishlaydi — kelajakda yana filial
+# kerak bo'lsa, shunchaki bu yerga yangi yozuv qo'shiladi.
 BRANCHES = {
     "Shiribom": {
         "group_id": GROUP_CHAT_ID,
         "orders_sheet": ORDERS_SHEET_NAME,
-    },
-    "Qorasaroy": {
-        "group_id": QORASAROY_GROUP_CHAT_ID,
-        "orders_sheet": os.getenv("QORASAROY_ORDERS_SHEET_NAME", "Qorasaroy orders").strip(),
     },
 }
 
@@ -58,8 +57,7 @@ logger.info(f"GOOGLE_CREDENTIALS_JSON exists: {bool(service_account_json_str)}")
 logger.info(f"SPREADSHEET_ID exists: {bool(GOOGLE_SHEET_ID)}")
 logger.info(f"DRIVERS_SHEET_NAME: {DRIVERS_SHEET_NAME}")
 logger.info(f"ORDERS_SHEET_NAME: {ORDERS_SHEET_NAME}")
-logger.info(f"GROUP_CHAT_ID (Shiribod): {GROUP_CHAT_ID}")
-logger.info(f"QORASAROY_GROUP_CHAT_ID: {QORASAROY_GROUP_CHAT_ID}")
+logger.info(f"GROUP_CHAT_ID: {GROUP_CHAT_ID}")
 logger.info("----------------------------------")
 
 TIMEZONE = "Asia/Tashkent"

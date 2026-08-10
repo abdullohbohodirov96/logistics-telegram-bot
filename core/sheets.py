@@ -304,7 +304,7 @@ def update_order_status_by_order_id(order_id, status, sheet_name=None):
 def write_driver_order_count_to_orders_sheet(order_id, driver_active_count):
     """
     Writes driver's active order count to column G of the correct orders sheet.
-    Searches both Shiribod and Qorasaroy sheets.
+    Searches every configured branch orders sheet (currently just one).
     """
     client = get_gspread_client()
     if not client:
