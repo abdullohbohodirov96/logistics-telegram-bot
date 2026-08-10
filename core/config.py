@@ -68,12 +68,10 @@ logger.info("----------------------------------")
 TIMEZONE = "Asia/Tashkent"
 
 # ── "Dunyabunya" shop/warehouse — fixed reference point every driver returns
-# to after unloading. Coordinates resolved from the shop's Yandex Maps pin
-# (https://yandex.uz/maps/-/CTS2RU58 -> Toshkent tumani, Qorasaroy mahalla,
-# Shohsada ko'chasi). Used to estimate "necha daqiqada dokonga qaytadi" after
-# a delivery finishes.
-SHOP_LAT = 41.403393
-SHOP_LNG = 69.231954
+# to after unloading. Corrected directly by the dispatcher. Used to
+# estimate "necha daqiqada dokonga qaytadi" after a delivery finishes.
+SHOP_LAT = 41.398979
+SHOP_LNG = 69.238353
 
 # Yandex Geocoder API key — turns a driver's delivered_lat/delivered_lng into
 # a human-readable address (rayon/mahalla/ko'cha). Optional: until this is

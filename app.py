@@ -39,12 +39,12 @@ ORDERS_SHEETS = list(dict.fromkeys([ORDERS_SHEET_NAME]))
 TZ = timezone(timedelta(hours=5))  # Asia/Tashkent
 
 # "Dunyabunya" shop/warehouse fixed location — every driver returns here
-# after unloading. Resolved from the shop's Yandex Maps pin
-# (https://yandex.uz/maps/-/CTS2RU58 -> Toshkent tumani, Qorasaroy mahalla,
-# Shohsada ko'chasi). Kept as a standalone constant here (not imported from
-# core/) since this dashboard service is intentionally self-contained.
-SHOP_LAT = 41.403393
-SHOP_LNG = 69.231954
+# after unloading. Corrected directly by the dispatcher (more accurate than
+# the earlier Yandex Maps pin estimate). Kept as a standalone constant here
+# (not imported from core/) since this dashboard service is intentionally
+# self-contained.
+SHOP_LAT = 41.398979
+SHOP_LNG = 69.238353
 
 # How long (minutes) after a delivery finishes we keep showing the car in
 # the "Do'konga qaytyapti" column before it just falls back to "Bo'sh". This
@@ -474,15 +474,25 @@ def _wialon_login():
         return None
 
 
-def get_wialon_positions() -> dict:
+def get_wialon_positions() -> list:
     """
-    Returns {normalized_car_number: {"lat": float, "lng": float}} — the
-    latest known GPS position for every unit in Wialon, matched to our car
-    numbers by stripping the vehicle-type word Wialon prefixes unit names
-    with (e.g. "LABO 01 446 OLA" -> "01446OLA"). Cars not found in Wialon,
-    or if Wialon isn't configured at all, simply aren't in the dict — every
-    caller already treats a missing entry as "no rayon available" and
-    degrades gracefully. Cached 15 seconds.
+    Returns a list of {"name_norm": str, "lat": float, "lng": float,
+    "unit_id": ...} — one entry per Wialon unit with a known last position.
+    "name_norm" is the unit's Wialon name with all whitespace/dashes
+    stripped and upper-cased (e.g. "Gazel 01-265 GB" -> "GAZEL01265GB").
+
+    Matching a car to a unit is done elsewhere (_find_wialon_position) by
+    checking whether the car's own normalized plate is a SUBSTRING of
+    name_norm — not by trying to strip out vehicle-type words and expect
+    an exact match. That earlier approach silently failed for anything
+    that wasn't exactly "TYPE + plate" or "plate + TYPE" with nothing else
+    in the name (driver name, notes, a type word we didn't know about,
+    etc all broke it). Substring matching on the plate itself is what was
+    actually asked for and works regardless of what else is in the name.
+
+    Cars not found in Wialon, or if Wialon isn't configured at all, simply
+    won't match anything — every caller already treats no match as "no
+    rayon available" and degrades gracefully. Cached 15 seconds.
     """
     cached = _cached("wialon_positions", ttl=15)
     if cached is not None:
@@ -490,7 +500,7 @@ def get_wialon_positions() -> dict:
 
     sid = _wialon_login()
     if not sid:
-        return {}
+        return []
 
     try:
         r = httpx.get(
@@ -522,29 +532,27 @@ def get_wialon_positions() -> dict:
             return {}
 
         items = data.get("items") if isinstance(data, dict) else None
-        result = {}
+        result = []
         for item in (items or []):
             name = item.get("nm") or ""
             pos = item.get("pos")
             if not pos or pos.get("y") is None or pos.get("x") is None:
                 continue
-            # Strip vehicle-type words WHEREVER they appear in the Wialon
-            # unit name (not just as a leading prefix) — some units are
-            # named "Gazel 01 265 GB", others "01 265 GB Gazel" or similar,
-            # and requiring the type word to come first silently dropped
-            # the match (car showed no rayon at all) for anything named
-            # the other way round.
-            words = [w for w in name.strip().split() if w.upper() not in _WIALON_TYPE_WORDS]
-            plate = _normalize_plate(" ".join(words))
-            if not plate:
+            name_norm = _normalize_plate(name)
+            if not name_norm:
                 continue
-            result[plate] = {"lat": pos["y"], "lng": pos["x"], "unit_id": item.get("id")}
+            result.append({
+                "name_norm": name_norm,
+                "lat": pos["y"],
+                "lng": pos["x"],
+                "unit_id": item.get("id"),
+            })
 
         _set("wialon_positions", result)
         return result
     except Exception as e:
         logger.warning(f"[wialon] search_items failed: {e}")
-        return {}
+        return []
 
 
 _LOCATOR_LINK_CACHE = {}  # unit_id -> (url, cached_at)
@@ -612,6 +620,23 @@ def get_wialon_locator_link(unit_id):
         logger.warning(f"[wialon] locator link error for unit {unit_id}: {e}")
         _LOCATOR_LINK_CACHE[unit_id] = (None, time.time(), 600)
         return None
+
+
+def _find_wialon_position(car_number, positions):
+    """
+    Match a car to its Wialon unit by checking whether the car's own
+    normalized plate is a SUBSTRING of the unit's normalized name --
+    e.g. plate "01265GB" matches a Wialon unit named "Gazel 01 265 GB",
+    "01-265-GB (Rasulov)", "01 265 GB Gazel", anything. Requires at least
+    5 characters so a near-empty plate can't match everything.
+    """
+    plate = _normalize_plate(car_number or "")
+    if not plate or len(plate) < 5:
+        return None
+    for p in positions:
+        if plate in p["name_norm"]:
+            return p
+    return None
 
 
 _RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
@@ -1000,7 +1025,7 @@ async def dashboard(request: Request):
     wialon_positions = get_wialon_positions()
     for car in cars:
         car["vehicle_type"] = get_vehicle_type(car.get("car_number") or "")
-        pos = wialon_positions.get(_normalize_plate(car.get("car_number") or ""))
+        pos = _find_wialon_position(car.get("car_number"), wialon_positions)
         if pos:
             car["rayon"] = get_rayon(pos["lat"], pos["lng"])
             car["gps_lat"] = pos["lat"]
