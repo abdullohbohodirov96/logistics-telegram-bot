@@ -320,7 +320,7 @@
                             </div>
                             <div class="row-r">
                                 {% if d.order_id %}<div class="row-o">#{{ d.order_id }}</div>{% endif %}
-                                {% if d.eta_minutes is not none %}<div class="row-eta">🏬 ~{{ d.eta_minutes }} daq</div>{% endif %}
+                                {% if d.eta_minutes is not none %}<div class="row-eta">🏬 ~{{ d.eta_minutes }} daq{% if d.eta_time %} ({{ d.eta_time }}){% endif %}</div>{% endif %}
                             </div>
                         </div>
                         {% endfor %}

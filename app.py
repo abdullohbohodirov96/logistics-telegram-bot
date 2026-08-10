@@ -399,9 +399,10 @@ def _estimate_minutes_to_shop(lat, lng):
 
 def get_returning_to_shop() -> dict:
     """
-    Returns {telegram_id(str): {"eta_minutes": int, "order_id": str}} for
-    drivers who just finished a delivery and are (estimated to be) still on
-    their way back to the shop.
+    Returns {telegram_id(str): {"eta_minutes": int, "eta_time": "HH:MM",
+    "order_id": str}} for drivers who just finished a delivery and are
+    (estimated to be) still on their way back to the shop. eta_time is the
+    estimated shop-arrival clock time, not just a countdown.
 
     We don't have continuous live GPS — only the single point the driver
     shared right before finishing (delivered_lat/delivered_lng). So this
@@ -439,7 +440,12 @@ def get_returning_to_shop() -> dict:
         remaining = eta_total - elapsed
         if remaining <= 0:
             continue
-        result[tid] = {"eta_minutes": remaining, "order_id": r.get('order_id') or ''}
+        arrival_time = completed_at + timedelta(minutes=eta_total)
+        result[tid] = {
+            "eta_minutes": remaining,
+            "eta_time": arrival_time.strftime("%H:%M"),
+            "order_id": r.get('order_id') or '',
+        }
 
     _set("returning_to_shop", result)
     return result
@@ -448,8 +454,17 @@ def get_returning_to_shop() -> dict:
 def get_last_finished_times(telegram_ids: list) -> dict:
     """
     For the given telegram_ids (drivers currently showing as free), find
-    each one's most recent YAKUNLANDI order's completed_at, so the board
-    can show "bo'sh bo'lganiga X daqiqa" instead of just a bare "Bo'sh".
+    each one's most recent YAKUNLANDI order and work out when they were
+    actually free, so the board can show "bo'sh bo'lganiga X daqiqa"
+    instead of just a bare "Bo'sh".
+
+    "Actually free" is NOT simply completed_at — a car that just finished
+    is still driving back to the shop for a while (see
+    get_returning_to_shop / RETURN_TO_SHOP_MAX_MINUTES). So the idle timer
+    here starts from completed_at + the estimated drive-back time (i.e. the
+    moment it would actually arrive at the shop), not from the moment the
+    delivery itself finished. Falls back to plain completed_at when there's
+    no delivered_lat/lng to estimate a return trip from.
 
     One bulk query (driver_telegram_id in (...) + order by completed_at
     desc), not one query per driver. Cached 15 seconds per exact set of
@@ -465,7 +480,7 @@ def get_last_finished_times(telegram_ids: list) -> dict:
         return cached
 
     rows = _sb_rows("orders", {
-        "select": "driver_telegram_id,completed_at",
+        "select": "driver_telegram_id,completed_at,delivered_lat,delivered_lng",
         "driver_telegram_id": f"in.({','.join(ids)})",
         "current_status": "eq.YAKUNLANDI",
         "order": "completed_at.desc",
@@ -478,8 +493,10 @@ def get_last_finished_times(telegram_ids: list) -> dict:
         if not tid or tid in result:
             continue  # first hit per driver is the most recent (already sorted desc)
         dt = _parse_iso(r.get('completed_at'))
-        if dt:
-            result[tid] = dt
+        if not dt:
+            continue
+        eta_to_shop = _estimate_minutes_to_shop(r.get('delivered_lat'), r.get('delivered_lng'))
+        result[tid] = dt + timedelta(minutes=eta_to_shop) if eta_to_shop else dt
 
     _set(cache_key, result)
     return result
@@ -560,6 +577,7 @@ async def dashboard(request: Request):
             if ret:
                 car["order_id"]    = ret.get("order_id")
                 car["eta_minutes"] = ret.get("eta_minutes")
+                car["eta_time"]    = ret.get("eta_time")
                 board["QAYTYAPTI"].append(car)
             else:
                 board["BOSH"].append(car)
