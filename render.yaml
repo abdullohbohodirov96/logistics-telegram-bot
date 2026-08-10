@@ -32,6 +32,11 @@ services:
       # to a random string, and put the SAME string in the Apps Script.
       - key: SHEET_WEBHOOK_SECRET
         sync: false
+      # Optional — Yandex Geocoder API key (developer.tech.yandex.ru).
+      # Without it, finish notifications just show a Google Maps link
+      # instead of a rayon/mahalla/ko'cha address.
+      - key: YANDEX_GEOCODER_API_KEY
+        sync: false
 
   - type: web
     name: logistics-dashboard
