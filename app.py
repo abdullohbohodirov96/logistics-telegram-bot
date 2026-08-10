@@ -31,7 +31,17 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GOOGLE_SHEET_ID = os.getenv("SPREADSHEET_ID") or os.getenv("GOOGLE_SHEET_ID", "")
 DRIVERS_SHEET_NAME = os.getenv("DRIVERS_SHEET_NAME", "drivers")
 ORDERS_SHEET_NAME = os.getenv("ORDERS_SHEET_NAME", "orders")
+QORASAROY_ORDERS_SHEET_NAME = os.getenv("QORASAROY_ORDERS_SHEET_NAME", "Qorasaroy orders")
+# All branch order sheets to scan for problem rows (dedup, keep order stable).
+ORDERS_SHEETS = list(dict.fromkeys([ORDERS_SHEET_NAME, QORASAROY_ORDERS_SHEET_NAME]))
 TZ = timezone(timedelta(hours=5))  # Asia/Tashkent
+
+# Sheet statuses that mean "this order did NOT go out and needs a human to
+# look at it" — must match exactly what core/scheduler.py writes.
+PROBLEM_STATUSES = {
+    "XAYDOVCHI_TOPILMADI", "TELEGRAM_ID_YOQ", "TELEGRAM_XATOSI",
+    "QATOR_BOSH", "XAYDOVCHI_BAND",
+}
 
 # Google credentials — try both env var names
 _sa_raw = os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or "{}"
@@ -167,6 +177,65 @@ def sheets_read_cars() -> list:
         logger.error(f"Sheets read error: {e}")
         return []
 
+def sheets_read_problem_orders() -> list:
+    """
+    Scan every branch order sheet for rows in a PROBLEM_STATUSES status
+    (order that did NOT go out to a driver and needs a human to look at
+    it) and return them with their reason note (column H), so the
+    dashboard's "Muammoli" count is a real, clickable list instead of a
+    number nobody can act on. Cached 15 seconds.
+    """
+    cached = _cached("problem_orders", ttl=15)
+    if cached is not None:
+        return cached
+
+    token = _get_google_token()
+    if not token or not GOOGLE_SHEET_ID:
+        return []
+
+    problems = []
+    for sheet_name in ORDERS_SHEETS:
+        try:
+            url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/{sheet_name}!A1:H"
+            r = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            r.raise_for_status()
+            data = r.json().get("values", [])
+            if not data:
+                continue
+
+            headers = [h.strip().lower() for h in data[0]]
+
+            def _find(names, default=-1):
+                for n in names:
+                    if n in headers:
+                        return headers.index(n)
+                return default
+
+            idx_id     = _find(['id', 'order_id', 'id_order'], 0)
+            idx_car    = _find(['car', 'car_number', 'mashina', 'moshina'], 1)
+            idx_status = _find(['status', 'holat'], 4)
+
+            for i, row in enumerate(data[1:], start=2):
+                status_val = row[idx_status].strip().upper() if len(row) > idx_status >= 0 else ""
+                if status_val not in PROBLEM_STATUSES:
+                    continue
+                order_id = row[idx_id].strip() if len(row) > idx_id >= 0 else f"row_{i}"
+                car_number = row[idx_car].strip() if len(row) > idx_car >= 0 else "-"
+                note = row[7].strip() if len(row) > 7 else ""
+                problems.append({
+                    "order_id": order_id,
+                    "car_number": car_number,
+                    "status": status_val,
+                    "note": note,
+                    "sheet_name": sheet_name,
+                })
+        except Exception as e:
+            logger.error(f"sheets_read_problem_orders: sheet={sheet_name} err: {e}")
+
+    _set("problem_orders", problems)
+    return problems
+
+
 # ── Supabase REST (only for today count + history) ─────────────────
 
 _sb_h = {
@@ -273,7 +342,14 @@ def get_driver_live_stages() -> dict:
 
 
 def get_supabase_stats() -> dict:
-    """Get today's finished + failed counts from Supabase. Cached 10s."""
+    """
+    Get today's finished count + the actual list of today's deliveries
+    from Supabase. Cached 10s.
+
+    NOTE: the finish status is 'YAKUNLANDI' (set by delivery.py /
+    core/db.py everywhere) — this used to check for 'DONE', which no
+    order ever actually has, so "Bugun yetkazildi" was always 0.
+    """
     cached = _cached("sb_stats", ttl=10)
     if cached is not None:
         return cached
@@ -281,18 +357,20 @@ def get_supabase_stats() -> dict:
     now = datetime.now(TZ)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    finished_today = _sb_count({
-        "current_status": "eq.DONE",
+    delivered_today = _sb_rows("orders", {
+        "select": "order_id,car_number,driver_name,completed_at",
+        "current_status": "eq.YAKUNLANDI",
         "completed_at": f"gte.{today_start}",
+        "order": "completed_at.desc",
+        "limit": "200",
     })
-
-    failed = _sb_count({
-        "current_status": "in.(ERROR_BOT_BLOCKED,ERROR_DRIVER_NOT_FOUND)",
-    })
+    for o in delivered_today:
+        dt = _parse_iso(o.get("completed_at"))
+        o["completed_time"] = dt.strftime("%H:%M") if dt else "-"
 
     result = {
-        "finished_today": finished_today,
-        "failed": failed,
+        "finished_today": len(delivered_today),
+        "delivered_today": delivered_today,
     }
     _set("sb_stats", result)
     return result
@@ -304,6 +382,7 @@ async def dashboard(request: Request):
     cars = sheets_read_cars()
     sb = get_supabase_stats()
     live_stages = get_driver_live_stages()
+    problem_orders = sheets_read_problem_orders()
 
     # 3-way live board: Bo'sh / Yuk ortyapti / Yo'lda — driven by Supabase's
     # real per-order status (live_stages), not the sheet's coarse 2-state
@@ -325,6 +404,12 @@ async def dashboard(request: Request):
         else:
             board["YUK_ORTYAPTI"].append(car)
 
+    # Soonest-free-first: cars about to become available float to the top,
+    # cars with no known duration (not in the reference table) sort last.
+    _no_eta = 10 ** 9
+    for key in ("YUK_ORTYAPTI", "YOLDA"):
+        board[key].sort(key=lambda c: c.get("eta_minutes") if c.get("eta_minutes") is not None else _no_eta)
+
     total = len(cars)
     free = len(board["BOSH"])
     busy = total - free
@@ -336,10 +421,13 @@ async def dashboard(request: Request):
             "total": total,
             "free": free,
             "busy": busy,
+            "problem_orders": problem_orders,
+            "delivered_today": sb["delivered_today"],
+            "last_updated": datetime.now(TZ).strftime("%H:%M:%S"),
             "stats": {
                 "finished_today": sb["finished_today"],
                 "active": busy,
-                "failed": sb["failed"],
+                "failed": len(problem_orders),
             }
         }
     )
@@ -351,10 +439,14 @@ def health():
 @app.get("/debug")
 def debug():
     cars = sheets_read_cars()
+    problems = sheets_read_problem_orders()
     return {
         "total_cars": len(cars),
         "cars": cars,
         "live_stages": get_driver_live_stages(),
+        "problem_orders_count": len(problems),
+        "problem_orders": problems,
+        "orders_sheets_scanned": ORDERS_SHEETS,
         "sheet_id": GOOGLE_SHEET_ID[:8] + "..." if GOOGLE_SHEET_ID else "MISSING",
         "creds": "SET" if _sa_info.get("client_email") else "MISSING",
     }

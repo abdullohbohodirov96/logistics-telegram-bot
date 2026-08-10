@@ -25,7 +25,17 @@
         }
         .logo { font-size: clamp(22px, 2.5vw, 38px); font-weight: 900; }
         .logo span { color: #e97609; }
+        .hdr-l { display: flex; align-items: center; gap: 18px; }
+        .search-box {
+            background: #262626; border: 1px solid #3a3a3a; border-radius: 8px;
+            padding: 7px 12px; color: #fff; font-family: inherit;
+            font-size: clamp(13px, 1vw, 15px); width: clamp(140px, 16vw, 220px);
+            outline: none;
+        }
+        .search-box::placeholder { color: #777; }
+        .search-box:focus { border-color: #e97609; }
         .hdr-r { display: flex; align-items: center; gap: 16px; }
+        .last-upd { font-size: clamp(9px, .8vw, 12px); color: #777; text-align: right; }
         .clk { font-size: clamp(18px, 2vw, 34px); font-weight: 900; color: #e97609; font-variant-numeric: tabular-nums; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: #28a745; animation: p 2s infinite; }
         @keyframes p { 0%,100%{opacity:1} 50%{opacity:.2} }
@@ -104,6 +114,24 @@
 
         .emp { color: #444; text-align: center; padding: 28px 0; font-size: 14px; }
 
+        /* Problem / delivered-today list panels */
+        .list-panel { margin-top: 14px; }
+        .list-grid { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+        .list-grid::-webkit-scrollbar { width: 4px; }
+        .list-grid::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .list-row {
+            background: #242424; border-radius: 8px; padding: 9px 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-left: 4px solid #555; gap: 10px;
+        }
+        .list-row.late { border-left-color: #dc3545; }
+        .list-row.done { border-left-color: #28a745; }
+        .list-l { display: flex; flex-direction: column; gap: 1px; }
+        .list-car { font-weight: 900; font-size: clamp(13px, 1.1vw, 17px); }
+        .list-sub { font-size: clamp(10px, .85vw, 13px); color: #999; }
+        .list-note { font-size: clamp(10px, .85vw, 12px); color: #dc3545; max-width: 55%; text-align: right; }
+        .list-time { font-size: clamp(11px, .95vw, 14px); color: #28a745; font-weight: 700; }
+
         /* 3-column live board */
         .board {
             display: grid;
@@ -153,8 +181,12 @@
 </head>
 <body>
     <div class="hdr">
-        <div class="logo">dunya<span>bunya</span></div>
+        <div class="hdr-l">
+            <div class="logo">dunya<span>bunya</span></div>
+            <input type="text" id="searchBox" class="search-box" placeholder="🔍 Mashina raqami..." oninput="filterCars(this.value)">
+        </div>
         <div class="hdr-r">
+            <div class="last-upd">Oxirgi yangilanish:<br>{{ last_updated }}</div>
             <div class="dot"></div>
             <div class="clk" id="clk">--:--:--</div>
         </div>
@@ -194,7 +226,7 @@
                     <div class="col-h"><span>🟢 Bo'sh</span><span class="col-cnt">{{ board.BOSH|length }}</span></div>
                     <div class="col-list">
                         {% for d in board.BOSH %}
-                        <div class="row-c">
+                        <div class="row-c" data-car="{{ d.car_number|upper }}">
                             <div><div class="row-cn">{{ d.car_number }}</div><div class="row-dn">{{ d.driver_name }}</div></div>
                         </div>
                         {% endfor %}
@@ -205,7 +237,7 @@
                     <div class="col-h"><span>🟡 Yuk ortyapti</span><span class="col-cnt">{{ board.YUK_ORTYAPTI|length }}</span></div>
                     <div class="col-list">
                         {% for d in board.YUK_ORTYAPTI %}
-                        <div class="row-c">
+                        <div class="row-c" data-car="{{ d.car_number|upper }}">
                             <div>
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 <div class="row-dn">{{ d.driver_name }}</div>
@@ -229,7 +261,7 @@
                     <div class="col-h"><span>🔵 Yo'lda</span><span class="col-cnt">{{ board.YOLDA|length }}</span></div>
                     <div class="col-list">
                         {% for d in board.YOLDA %}
-                        <div class="row-c">
+                        <div class="row-c" data-car="{{ d.car_number|upper }}">
                             <div>
                                 <div class="row-cn">{{ d.car_number }}</div>
                                 <div class="row-dn">{{ d.driver_name }}</div>
@@ -252,6 +284,38 @@
             </div>
         </div>
 
+        <div class="pnl list-panel">
+            <div class="pnl-t">⚠️ Muammoli buyurtmalar ({{ problem_orders|length }})</div>
+            <div class="list-grid">
+                {% for p in problem_orders %}
+                <div class="list-row late" data-car="{{ p.car_number|upper }}">
+                    <div class="list-l">
+                        <div class="list-car">{{ p.car_number }} <span style="color:#777;font-weight:400;">#{{ p.order_id }}</span></div>
+                        <div class="list-sub">{{ p.status }}</div>
+                    </div>
+                    <div class="list-note">{{ p.note or '—' }}</div>
+                </div>
+                {% endfor %}
+                {% if not problem_orders %}<div class="emp">Muammoli buyurtma yo'q 🎉</div>{% endif %}
+            </div>
+        </div>
+
+        <div class="pnl list-panel">
+            <div class="pnl-t">✅ Bugun yetkazilganlar ({{ delivered_today|length }})</div>
+            <div class="list-grid">
+                {% for o in delivered_today %}
+                <div class="list-row done" data-car="{{ o.car_number|upper }}">
+                    <div class="list-l">
+                        <div class="list-car">{{ o.car_number }} <span style="color:#777;font-weight:400;">#{{ o.order_id }}</span></div>
+                        <div class="list-sub">{{ o.driver_name }}</div>
+                    </div>
+                    <div class="list-time">{{ o.completed_time }}</div>
+                </div>
+                {% endfor %}
+                {% if not delivered_today %}<div class="emp">Bugun hali yetkazilgan buyurtma yo'q</div>{% endif %}
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -261,7 +325,30 @@
                 ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
         }
         setInterval(tick,1000); tick();
-        setTimeout(function(){location.reload()},8000);
+
+        // Live filter by car number — matches anywhere in the number
+        // ("4" matches "01 655 OLA-04" etc), case-insensitive, across the
+        // board columns AND the problem/delivered lists.
+        function filterCars(q){
+            q = (q||'').trim().toUpperCase();
+            document.querySelectorAll('[data-car]').forEach(function(el){
+                el.style.display = (!q || el.getAttribute('data-car').indexOf(q) !== -1) ? '' : 'none';
+            });
+        }
+
+        // Auto-refresh, but don't yank the page (and the search box's focus/
+        // value) out from under someone actively searching.
+        function scheduleReload(){
+            setTimeout(function(){
+                var box = document.getElementById('searchBox');
+                if (box && box.value.trim() !== '') {
+                    scheduleReload();
+                } else {
+                    location.reload();
+                }
+            }, 8000);
+        }
+        scheduleReload();
     </script>
 </body>
 </html>
