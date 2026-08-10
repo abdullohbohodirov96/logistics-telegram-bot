@@ -58,5 +58,17 @@ services:
         sync: false
       - key: DRIVERS_SHEET_NAME
         value: "drivers"
+      # Wialon Local — jonli GPS pozitsiyasi (qaysi mashina qaysi rayonda).
+      # WIALON_URL = login sahifasidagi server manzili (masalan
+      # https://3.gpsmonitor.uz). WIALON_TOKEN = login.html orqali
+      # yaratilgan API token.
+      - key: WIALON_URL
+        sync: false
+      - key: WIALON_TOKEN
+        sync: false
+      # Rayon nomini koordinatadan olish uchun (Yandex Geocoder) — bot
+      # servisidagi bilan bir xil qiymat.
+      - key: YANDEX_GEOCODER_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: "3.11.9"

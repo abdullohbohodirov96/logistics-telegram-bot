@@ -51,6 +51,35 @@ SHOP_LNG = 69.231954
 # is a ceiling in case the ETA estimate undershoots reality.
 RETURN_TO_SHOP_MAX_MINUTES = 90
 
+# ── Wialon Local (live GPS) ────────────────────────────────────────────────
+# Optional — without these two set, every car simply has no rayon shown
+# (board still works fine, same as before this feature existed).
+WIALON_URL = (os.getenv("WIALON_URL") or "").rstrip("/")
+WIALON_TOKEN = os.getenv("WIALON_TOKEN", "").strip()
+
+# Reused for coordinate -> rayon name, same key as the bot service uses
+# (core/geocoding.py) — kept as its own standalone constant/call here since
+# this dashboard is intentionally self-contained (doesn't import core/).
+YANDEX_GEOCODER_API_KEY = os.getenv("YANDEX_GEOCODER_API_KEY", "").strip()
+
+# Wialon unit names are like "Changan 01 D 974 UB" / "LABO 01 446 OLA" —
+# a vehicle-type word followed by the plate. Stripped before matching
+# against the drivers sheet's car_number.
+_WIALON_TYPE_WORDS = {
+    "CHANGAN", "LABO", "DAMAS", "GAZEL", "ISUZU", "GAZ", "BIG",
+}
+
+
+def _normalize_plate(value: str) -> str:
+    """Same normalization used everywhere else (core/utils.normalize_car_number)
+    — strip whitespace/dashes, uppercase — kept local since this file avoids
+    importing core/."""
+    if not value:
+        return ""
+    import re
+    cleaned = str(value).strip().upper()
+    return re.sub(r"[\s\-]+", "", cleaned)
+
 # Sheet statuses that mean "this order did NOT go out and needs a human to
 # look at it" — must match exactly what core/scheduler.py writes.
 PROBLEM_STATUSES = {
@@ -398,6 +427,169 @@ def _estimate_minutes_to_shop(lat, lng):
     return max(1, round((km / _AVG_SPEED_KMH) * 60))
 
 
+# ── Wialon Local (live GPS positions) ──────────────────────────────────────
+
+_WIALON_SID = None
+_WIALON_SID_TIME = 0.0
+
+
+def _wialon_login():
+    """
+    Logs into Wialon Local with the API token and caches the session id
+    (sid) for 20 minutes — every Wialon call needs a sid, and re-logging in
+    on every single dashboard refresh would be wasteful and slow. If a
+    later call reports the session as invalid, it clears the cached sid so
+    the next call re-logs in automatically.
+    """
+    global _WIALON_SID, _WIALON_SID_TIME
+    if _WIALON_SID and time.time() - _WIALON_SID_TIME < 1200:
+        return _WIALON_SID
+    if not WIALON_URL or not WIALON_TOKEN:
+        return None
+    try:
+        r = httpx.get(
+            f"{WIALON_URL}/wialon/ajax.html",
+            params={"svc": "token/login", "params": json.dumps({"token": WIALON_TOKEN})},
+            timeout=8,
+        )
+        data = r.json()
+        sid = data.get("eid") if isinstance(data, dict) else None
+        if not sid:
+            logger.warning(f"[wialon] login failed: {data}")
+            return None
+        _WIALON_SID = sid
+        _WIALON_SID_TIME = time.time()
+        return sid
+    except Exception as e:
+        logger.warning(f"[wialon] login error: {e}")
+        return None
+
+
+def get_wialon_positions() -> dict:
+    """
+    Returns {normalized_car_number: {"lat": float, "lng": float}} — the
+    latest known GPS position for every unit in Wialon, matched to our car
+    numbers by stripping the vehicle-type word Wialon prefixes unit names
+    with (e.g. "LABO 01 446 OLA" -> "01446OLA"). Cars not found in Wialon,
+    or if Wialon isn't configured at all, simply aren't in the dict — every
+    caller already treats a missing entry as "no rayon available" and
+    degrades gracefully. Cached 15 seconds.
+    """
+    cached = _cached("wialon_positions", ttl=15)
+    if cached is not None:
+        return cached
+
+    sid = _wialon_login()
+    if not sid:
+        return {}
+
+    try:
+        r = httpx.get(
+            f"{WIALON_URL}/wialon/ajax.html",
+            params={
+                "svc": "core/search_items",
+                "sid": sid,
+                "params": json.dumps({
+                    "spec": {
+                        "itemsType": "avl_unit",
+                        "propName": "sys_name",
+                        "propValueMask": "*",
+                        "sortType": "sys_name",
+                    },
+                    "force": 1,
+                    "flags": 1025,  # base info (1) + last position (1024)
+                    "from": 0,
+                    "to": 0,
+                }),
+            },
+            timeout=10,
+        )
+        data = r.json()
+        if isinstance(data, dict) and data.get("error"):
+            # Session likely expired — force a fresh login on the next call.
+            global _WIALON_SID
+            _WIALON_SID = None
+            logger.warning(f"[wialon] search_items error: {data}")
+            return {}
+
+        items = data.get("items") if isinstance(data, dict) else None
+        result = {}
+        for item in (items or []):
+            name = item.get("nm") or ""
+            pos = item.get("pos")
+            if not pos or pos.get("y") is None or pos.get("x") is None:
+                continue
+            words = name.strip().split()
+            while words and words[0].upper() in _WIALON_TYPE_WORDS:
+                words.pop(0)
+            plate = _normalize_plate(" ".join(words))
+            if not plate:
+                continue
+            result[plate] = {"lat": pos["y"], "lng": pos["x"]}
+
+        _set("wialon_positions", result)
+        return result
+    except Exception as e:
+        logger.warning(f"[wialon] search_items failed: {e}")
+        return {}
+
+
+_RAYON_CACHE = {}  # "lat_grid,lng_grid" -> (rayon_name_or_None, cached_at)
+
+
+def get_rayon(lat, lng):
+    """
+    Coordinate -> rayon (district) name via Yandex Geocoder — same idea as
+    core/geocoding.py on the bot side, duplicated here since this dashboard
+    is self-contained. Cached by a coarse ~1.1km grid cell (rounding to 2
+    decimal places) for 10 minutes: a car doesn't change rayon every few
+    meters, and the dashboard reloads every 8 seconds, so without this a
+    single busy board could burn through the Yandex free quota in minutes.
+    """
+    if not YANDEX_GEOCODER_API_KEY or lat is None or lng is None:
+        return None
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+
+    grid_key = f"{round(lat, 2)},{round(lng, 2)}"
+    cached = _RAYON_CACHE.get(grid_key)
+    if cached and time.time() - cached[1] < 600:
+        return cached[0]
+
+    rayon = None
+    try:
+        r = httpx.get(
+            "https://geocode-maps.yandex.ru/1.x/",
+            params={
+                "apikey": YANDEX_GEOCODER_API_KEY,
+                "geocode": f"{lng},{lat}",
+                "format": "json",
+                "lang": "uz_UZ",
+                "results": 1,
+            },
+            timeout=6,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            members = (
+                data.get("response", {})
+                .get("GeoObjectCollection", {})
+                .get("featureMember", [])
+            )
+            if members:
+                meta = members[0]["GeoObject"].get("metaDataProperty", {}).get("GeocoderMetaData", {})
+                components = meta.get("Address", {}).get("Components", [])
+                by_kind = {c.get("kind"): c.get("name") for c in components if c.get("kind") and c.get("name")}
+                rayon = by_kind.get("area") or by_kind.get("district") or by_kind.get("locality")
+    except Exception as e:
+        logger.warning(f"[rayon] geocode failed for ({lat},{lng}): {e}")
+
+    _RAYON_CACHE[grid_key] = (rayon, time.time())
+    return rayon
+
+
 def get_returning_to_shop() -> dict:
     """
     Returns {telegram_id(str): {"eta_minutes": int, "eta_time": "HH:MM",
@@ -561,8 +753,14 @@ async def dashboard(request: Request):
     # Tag every car with its vehicle type (GAZEL / LABO / DAMAS / CHANGAN...)
     # from the reference table, so it's visible on the board and matchable
     # by the search box (e.g. typing "gazel" filters to just Gazels).
+    # Also tag with its live rayon (district) from Wialon GPS + Yandex
+    # reverse geocoding, when both are configured — degrades to no rayon
+    # shown (not an error) if either one isn't set up.
+    wialon_positions = get_wialon_positions()
     for car in cars:
         car["vehicle_type"] = get_vehicle_type(car.get("car_number") or "")
+        pos = wialon_positions.get(_normalize_plate(car.get("car_number") or ""))
+        car["rayon"] = get_rayon(pos["lat"], pos["lng"]) if pos else None
 
     # 4-way live board: Bo'sh / Yuk ortyapti / Yo'lda / Do'konga qaytyapti —
     # driven by Supabase's real per-order status (live_stages), not the
