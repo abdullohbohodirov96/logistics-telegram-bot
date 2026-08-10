@@ -188,6 +188,7 @@
         .row-eta { font-size: clamp(9px, .8vw, 12px); color: #aaa; font-weight: 700; margin-top: 2px; white-space: nowrap; }
         .row-eta-late { color: #ff5c5c; }
         .row-eta-free { color: #28a745; }
+        .row-eta-ontime { color: #28a745; }
 
         @media (max-width: 1100px) {
             .sts { grid-template-columns: repeat(2, 1fr); }
@@ -275,7 +276,7 @@
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
                                 {% if d.eta_minutes is not none %}
                                     {% if d.eta_minutes > 0 %}
-                                        <div class="row-eta">⏱ ~{{ d.eta_minutes }} daq ({{ d.eta_time }})</div>
+                                        <div class="row-eta row-eta-ontime">⏱ ~{{ d.eta_minutes }} daq ({{ d.eta_time }})</div>
                                     {% else %}
                                         <div class="row-eta row-eta-late">⚠️ {{ -d.eta_minutes }} daq kechikdi</div>
                                     {% endif %}
@@ -301,7 +302,7 @@
                                 {% if d.order_id or d.current_order_id %}<div class="row-o">#{{ d.order_id or d.current_order_id }}</div>{% endif %}
                                 {% if d.eta_minutes is not none %}
                                     {% if d.eta_minutes > 0 %}
-                                        <div class="row-eta">⏱ ~{{ d.eta_minutes }} daq ({{ d.eta_time }})</div>
+                                        <div class="row-eta row-eta-ontime">⏱ ~{{ d.eta_minutes }} daq ({{ d.eta_time }})</div>
                                     {% else %}
                                         <div class="row-eta row-eta-late">⚠️ {{ -d.eta_minutes }} daq kechikdi</div>
                                     {% endif %}
@@ -325,7 +326,7 @@
                             </div>
                             <div class="row-r">
                                 {% if d.order_id %}<div class="row-o">#{{ d.order_id }}</div>{% endif %}
-                                {% if d.eta_minutes is not none %}<div class="row-eta">🏬 ~{{ d.eta_minutes }} daq{% if d.eta_time %} ({{ d.eta_time }}){% endif %}</div>{% endif %}
+                                {% if d.eta_minutes is not none %}<div class="row-eta row-eta-ontime">🏬 ~{{ d.eta_minutes }} daq{% if d.eta_time %} ({{ d.eta_time }}){% endif %}</div>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
