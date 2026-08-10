@@ -567,8 +567,10 @@ def get_wialon_locator_link(unit_id):
     if not unit_id or not WIALON_URL:
         return None
     cached = _LOCATOR_LINK_CACHE.get(unit_id)
-    if cached and time.time() - cached[1] < 6 * 24 * 3600:
-        return cached[0]
+    if cached:
+        url, cached_at, ttl = cached
+        if time.time() - cached_at < ttl:
+            return url
 
     sid = _wialon_login()
     if not sid:
@@ -594,13 +596,21 @@ def get_wialon_locator_link(unit_id):
         data = r.json()
         token = data.get("h") if isinstance(data, dict) else None
         if not token:
+            # This access token's ACL doesn't allow creating new tokens
+            # (error 7 / CHECK_ACL_FAILED is the account-permissions
+            # flavor of this, not a per-unit problem) -- retrying every 8s
+            # on every dashboard refresh just hammers the Wialon API for
+            # nothing, so a failed lookup is cached too, just for a much
+            # shorter 10 minutes (in case permissions get fixed sooner).
             logger.warning(f"[wialon] locator token creation failed for unit {unit_id}: {data}")
+            _LOCATOR_LINK_CACHE[unit_id] = (None, time.time(), 600)
             return None
         url = f"{WIALON_URL}/locator/index.html?t={token}"
-        _LOCATOR_LINK_CACHE[unit_id] = (url, time.time())
+        _LOCATOR_LINK_CACHE[unit_id] = (url, time.time(), 6 * 24 * 3600)
         return url
     except Exception as e:
         logger.warning(f"[wialon] locator link error for unit {unit_id}: {e}")
+        _LOCATOR_LINK_CACHE[unit_id] = (None, time.time(), 600)
         return None
 
 
