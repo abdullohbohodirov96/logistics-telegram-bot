@@ -555,71 +555,31 @@ def get_wialon_positions() -> list:
         return []
 
 
-_LOCATOR_LINK_CACHE = {}  # unit_id -> (url, cached_at)
-
-
-def get_wialon_locator_link(unit_id):
+def get_wialon_web_link(unit_id):
     """
-    Returns a public Wialon "Locator" link (https://<host>/locator/index.html?t=TOKEN)
-    for the given unit — opens Wialon's own live map, focused on just that
-    one car, with no login required. This is what the rayon text links to
-    now instead of a static Google Maps pin, per dispatcher request ("GPS'ga
-    o'tadigan, o'sha moshina ochilishi kerak").
+    Returns a link that silently logs the dispatcher straight into their
+    own Wialon Local account and lands on the live monitoring map already
+    authenticated -- no typing a username/password each time. Uses the
+    same access_token-in-the-URL mechanism the dispatcher found by hand
+    (https://<host>/login.html?...&access_token=...&svc_error=0), reusing
+    our existing WIALON_TOKEN.
 
-    Each link needs its own token (svc=token/update, one Wialon API call),
-    so results are cached for 6 days per unit — comfortably under Wialon's
-    100-day token auto-expiry, and cheap since a unit's id never changes.
-    Without this, generating a fresh token on every single dashboard
-    refresh for every car would be both slow and wasteful.
+    This replaces the earlier "Locator" public-share-link approach
+    (svc=token/update, one API call per unit) -- that would have jumped
+    straight to just this one car with zero login, but the account's
+    access token doesn't have permission to create those links
+    (confirmed in production: {"error": 7, "reason": "CHECK_ACL_FAILED"}
+    on every single attempt). Fixing that needs the token's ACL widened
+    in the Wialon UI itself, which isn't something this code can do.
+
+    unit_id isn't used yet -- this currently opens the general map, not
+    zoomed to this specific car. Once we have the exact URL Wialon Local
+    uses when you click a unit inside the app (fragment/query format
+    varies by version), a unit-focus param can be added here.
     """
-    if not unit_id or not WIALON_URL:
+    if not WIALON_URL or not WIALON_TOKEN:
         return None
-    cached = _LOCATOR_LINK_CACHE.get(unit_id)
-    if cached:
-        url, cached_at, ttl = cached
-        if time.time() - cached_at < ttl:
-            return url
-
-    sid = _wialon_login()
-    if not sid:
-        return None
-    try:
-        r = httpx.get(
-            f"{WIALON_URL}/wialon/ajax.html",
-            params={
-                "svc": "token/update",
-                "sid": sid,
-                "params": json.dumps({
-                    "callMode": "create",
-                    "app": "locator",
-                    "at": 0,
-                    "dur": 0,
-                    "fl": 256,
-                    "p": json.dumps({"zones": 0, "tracks": 1}),
-                    "items": [unit_id],
-                }),
-            },
-            timeout=10,
-        )
-        data = r.json()
-        token = data.get("h") if isinstance(data, dict) else None
-        if not token:
-            # This access token's ACL doesn't allow creating new tokens
-            # (error 7 / CHECK_ACL_FAILED is the account-permissions
-            # flavor of this, not a per-unit problem) -- retrying every 8s
-            # on every dashboard refresh just hammers the Wialon API for
-            # nothing, so a failed lookup is cached too, just for a much
-            # shorter 10 minutes (in case permissions get fixed sooner).
-            logger.warning(f"[wialon] locator token creation failed for unit {unit_id}: {data}")
-            _LOCATOR_LINK_CACHE[unit_id] = (None, time.time(), 600)
-            return None
-        url = f"{WIALON_URL}/locator/index.html?t={token}"
-        _LOCATOR_LINK_CACHE[unit_id] = (url, time.time(), 6 * 24 * 3600)
-        return url
-    except Exception as e:
-        logger.warning(f"[wialon] locator link error for unit {unit_id}: {e}")
-        _LOCATOR_LINK_CACHE[unit_id] = (None, time.time(), 600)
-        return None
+    return f"{WIALON_URL}/login.html?access_token={WIALON_TOKEN}&svc_error=0"
 
 
 def _find_wialon_position(car_number, positions):
@@ -1034,7 +994,7 @@ async def dashboard(request: Request):
             # for this one car (moving in real time), not a static pin —
             # per dispatcher request. Falls back to a plain Maps pin if a
             # Locator link couldn't be generated (e.g. Wialon down).
-            car["gps_link"] = get_wialon_locator_link(pos.get("unit_id")) \
+            car["gps_link"] = get_wialon_web_link(pos.get("unit_id")) \
                 or f"https://maps.google.com/?q={pos['lat']},{pos['lng']}"
         else:
             car["rayon"] = None
