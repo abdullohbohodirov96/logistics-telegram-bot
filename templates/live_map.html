@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ car_number }} — jonli GPS</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0f1115; color: #e6e6e6; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #171a21; border-bottom: 1px solid #262a33; }
+    #topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    #status { font-size: 12px; color: #9aa4b2; }
+    #status.stale { color: #e8a33d; }
+    #status.fresh { color: #2ecc71; }
+    #map { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; }
+    #notfound { display: none; padding: 40px 16px; text-align: center; color: #9aa4b2; }
+    a.wialon-link { color: #6aa9ff; text-decoration: none; font-size: 12px; }
+    a.wialon-link:hover { text-decoration: underline; }
+    .leaflet-popup-content { font-size: 13px; }
+</style>
+</head>
+<body>
+    <div id="topbar">
+        <h1>🚗 {{ car_number }}</h1>
+        <div>
+            <span id="status">Yuklanmoqda...</span>
+            {% if wialon_link %}
+            <span style="margin: 0 8px; color:#333;">|</span>
+            <a class="wialon-link" href="{{ wialon_link }}" target="_blank" rel="noopener">Wialon'da ochish ↗</a>
+            {% endif %}
+        </div>
+    </div>
+    <div id="map"></div>
+    <div id="notfound">
+        <p>Bu moshina uchun hozircha GPS joylashuvi topilmadi.</p>
+        <p style="font-size:12px;">Wialon'da bu raqam ro'yxatdan o'tganiga va yoqilganiga ishonch hosil qiling.</p>
+    </div>
+
+<script>
+const carNumber = {{ car_number_json|safe }};
+let map = null;
+let marker = null;
+let firstLoad = true;
+
+function fmtAge(sec) {
+    if (sec === null || sec === undefined) return "";
+    if (sec < 60) return `${sec} soniya oldin`;
+    if (sec < 3600) return `${Math.floor(sec/60)} daqiqa oldin`;
+    return `${Math.floor(sec/3600)} soat oldin`;
+}
+
+async function poll() {
+    try {
+        const res = await fetch(`/api/position/${encodeURIComponent(carNumber)}`);
+        const data = await res.json();
+        const statusEl = document.getElementById("status");
+        const notfoundEl = document.getElementById("notfound");
+        const mapEl = document.getElementById("map");
+
+        if (!data.found) {
+            mapEl.style.display = "none";
+            notfoundEl.style.display = "block";
+            statusEl.textContent = "Topilmadi";
+            statusEl.className = "stale";
+            return;
+        }
+        mapEl.style.display = "block";
+        notfoundEl.style.display = "none";
+
+        const latlng = [data.lat, data.lng];
+        if (!map) {
+            map = L.map("map").setView(latlng, 15);
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                attribution: "© OpenStreetMap",
+                maxZoom: 19,
+            }).addTo(map);
+            marker = L.marker(latlng).addTo(map);
+        } else {
+            marker.setLatLng(latlng);
+            if (firstLoad) map.setView(latlng, 15);
+        }
+        firstLoad = false;
+
+        const speedText = (data.speed !== null && data.speed !== undefined) ? `${data.speed} km/soat` : "";
+        const ageText = fmtAge(data.age_seconds);
+        marker.bindPopup(`<b>${carNumber}</b><br>${speedText}${speedText && ageText ? " · " : ""}${ageText}`);
+
+        statusEl.textContent = [speedText, ageText].filter(Boolean).join(" · ") || "Jonli";
+        statusEl.className = (data.age_seconds !== null && data.age_seconds > 300) ? "stale" : "fresh";
+    } catch (e) {
+        document.getElementById("status").textContent = "Xatolik, qayta urinilmoqda...";
+        document.getElementById("status").className = "stale";
+    }
+}
+
+poll();
+setInterval(poll, 6000);
+</script>
+</body>
+</html>

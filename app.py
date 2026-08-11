@@ -13,8 +13,9 @@ import time
 import math
 import logging
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 import httpx
 import uvicorn
@@ -529,7 +530,7 @@ def get_wialon_positions() -> list:
             global _WIALON_SID
             _WIALON_SID = None
             logger.warning(f"[wialon] search_items error: {data}")
-            return {}
+            return []
 
         items = data.get("items") if isinstance(data, dict) else None
         result = []
@@ -546,6 +547,9 @@ def get_wialon_positions() -> list:
                 "lat": pos["y"],
                 "lng": pos["x"],
                 "unit_id": item.get("id"),
+                "speed": pos.get("s"),   # km/h, per Wialon's pos format
+                "course": pos.get("c"),  # heading in degrees, 0-360
+                "updated_at": pos.get("t"),  # unix timestamp of last fix
             })
 
         _set("wialon_positions", result)
@@ -990,12 +994,14 @@ async def dashboard(request: Request):
             car["rayon"] = get_rayon(pos["lat"], pos["lng"])
             car["gps_lat"] = pos["lat"]
             car["gps_lng"] = pos["lng"]
-            # The rayon text links here — Wialon's own live tracking map
-            # for this one car (moving in real time), not a static pin —
-            # per dispatcher request. Falls back to a plain Maps pin if a
-            # Locator link couldn't be generated (e.g. Wialon down).
-            car["gps_link"] = get_wialon_web_link(pos.get("unit_id")) \
-                or f"https://maps.google.com/?q={pos['lat']},{pos['lng']}"
+            # The rayon text links here — our own /live page (moving marker,
+            # polls /api/position every few seconds), not Wialon's own app.
+            # Wialon Local's web UI doesn't reflect the selected unit in
+            # its URL at all (confirmed: the address bar just stays
+            # "3.gpsmonitor.uz" no matter what car you click inside it),
+            # so there's no way to deep-link into it directly at a car —
+            # this is the actual moving-car view that was asked for.
+            car["gps_link"] = f"/live/{quote(car.get('car_number') or '')}"
         else:
             car["rayon"] = None
             car["gps_lat"] = None
@@ -1088,6 +1094,51 @@ async def dashboard(request: Request):
             }
         }
     )
+
+@app.get("/live/{car_number}", response_class=HTMLResponse)
+async def live_map(request: Request, car_number: str):
+    """
+    Our own live-tracking page for one car. Built because Wialon Local's
+    own web app doesn't reflect the selected unit in the URL at all (
+    confirmed by the dispatcher: the address bar just stays
+    "3.gpsmonitor.uz" no matter what car is selected inside the app) --
+    there is no deep link into it to open a specific car. This page does
+    the same job ourselves: a small Leaflet map centered on this one car,
+    polling /api/position for a fresh point every few seconds so the
+    marker visibly moves while the driver is en route.
+    """
+    wialon_link = get_wialon_web_link(None)
+    return templates.TemplateResponse(
+        "live_map.html",
+        {
+            "request": request,
+            "car_number": car_number,
+            "car_number_json": json.dumps(car_number),
+            "wialon_link": wialon_link,
+        },
+    )
+
+
+@app.get("/api/position/{car_number}")
+async def api_position(car_number: str):
+    pos = _find_wialon_position(car_number, get_wialon_positions())
+    if not pos:
+        return JSONResponse({"found": False})
+    updated_at = pos.get("updated_at")
+    age_seconds = None
+    if updated_at:
+        try:
+            age_seconds = max(0, int(time.time()) - int(updated_at))
+        except (TypeError, ValueError):
+            age_seconds = None
+    return JSONResponse({
+        "found": True,
+        "lat": pos["lat"],
+        "lng": pos["lng"],
+        "speed": pos.get("speed"),
+        "age_seconds": age_seconds,
+    })
+
 
 @app.get("/health")
 def health():
