@@ -125,7 +125,12 @@ async def update_group_report(bot: Bot, order_id: str, override_group_id=None):
 
 @router.callback_query(F.data.startswith("take_"))
 async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    order_id = callback.data.split("_")[1]
+    # NOTE: order_id is NOT guaranteed to be underscore-free — Sheets rows
+    # with an empty ID column fall back to "row_<N>" (core/sheets.py), so a
+    # naive split("_")[1] truncates "take_row_1945" down to just "row".
+    # Slicing off the fixed prefix keeps the rest of the string intact
+    # no matter how many underscores order_id itself contains.
+    order_id = callback.data[len("take_"):]
 
     # Answer immediately — prevents button from "freezing" while DB is checked
     await callback.answer()
@@ -206,8 +211,12 @@ async def handle_take_delivery(callback: CallbackQuery, state: FSMContext, bot: 
 @router.callback_query(F.data.startswith("sel_block_"))
 async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    parts = callback.data.split("_")
-    letter, order_id = parts[2], parts[3]
+    # order_id can itself contain "_" (e.g. "row_1945" fallback IDs), so
+    # split("_") on the whole string and indexing by position truncates it.
+    # Only the fixed "sel_block_" prefix and the single-letter block code
+    # are safe to split on; everything after that is the order_id.
+    rest = callback.data[len("sel_block_"):]
+    letter, order_id = rest.split("_", 1)
     
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
@@ -230,8 +239,10 @@ async def handle_sel_block(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("block_act_"))
 async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
-    parts = callback.data.split("_")
-    letter, status_type, order_id = parts[2], parts[3], parts[4]
+    # Same underscore-in-order_id issue as handle_sel_block — only split
+    # off the fixed letter/status_type segments, keep the remainder intact.
+    rest = callback.data[len("block_act_"):]
+    letter, status_type, order_id = rest.split("_", 2)
     # Explicitly define status variables to prevent NameError
     status = "noma'lum"
     emoji = "⚪️"
@@ -332,7 +343,7 @@ async def handle_block_action(callback: CallbackQuery, state: FSMContext, bot: B
 @router.callback_query(F.data.startswith("block_back_"))
 async def handle_block_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    order_id = callback.data.split("_")[2]
+    order_id = callback.data[len("block_back_"):]
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     
@@ -361,7 +372,7 @@ async def handle_block_back(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("confirm_blocks_"))
 async def handle_confirm_blocks(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    order_id = callback.data.split("_")[2]
+    order_id = callback.data[len("confirm_blocks_"):]
     data = await state.get_data()
     stage_history = data.get('stage_history') or []
     
@@ -468,12 +479,13 @@ async def handle_transit(callback: CallbackQuery, state: FSMContext, bot: Bot):
 @router.callback_query(F.data.startswith("tr_extra_"))
 async def handle_transit_extra(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
-    parts = callback.data.split("_")
-    if len(parts) < 5:
+    rest = callback.data[len("tr_extra_"):]
+    try:
+        action, num_str, order_id = rest.split("_", 2)
+        num = int(num_str)
+    except ValueError:
         await callback.message.answer("❌ Xatolik, qayta urinib ko'ring")
         return
-        
-    action, num, order_id = parts[2], int(parts[3]), parts[4]
     logger.info(f"Transit Extra answer received: {action} for transit {num} (Order {order_id})")
     
     data = await state.get_data()
@@ -639,7 +651,7 @@ async def delivered_loc_wrong_input(message: Message):
 
 @router.callback_query(F.data.startswith("final_done_"))
 async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    order_id = callback.data.split("_")[2]
+    order_id = callback.data[len("final_done_"):]
     logger.info(f"[FINISH] Finish button clicked for order_id: {order_id}")
     await callback.answer()
     
