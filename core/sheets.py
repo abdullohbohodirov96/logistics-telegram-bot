@@ -130,11 +130,38 @@ def get_new_orders(sheet_name=None):
         status_idx = fuzzy_match_header(headers, ['status', 'holat'])
         comment_idx= fuzzy_match_header(headers, ['comment', 'izoh'])
 
+        # ID is always column A by sheet convention (README: "orders" tab,
+        # column A = order_id) — if the header text doesn't happen to match
+        # one of the known synonyms (e.g. dispatcher typed something else
+        # in A1), fall back to column 0 instead of -1 so IDs the dispatcher
+        # actually typed into column A (like "s71866") are picked up
+        # instead of being silently ignored in favor of a synthetic
+        # "row_N" ID that has nothing to do with what's on the sheet.
+        if id_idx < 0:
+            id_idx = 0
+
+        ids_to_backfill = []  # (row_index, order_id) — cells that need order_id written back
         new_orders = []
         for i, row in enumerate(values[1:], start=2):
             status_val = row[status_idx].strip() if len(row) > status_idx >= 0 else ""
             if status_val.upper() == "SEND":
-                order_id = row[id_idx].strip() if id_idx >= 0 and len(row) > id_idx else f"row_{i}"
+                cell_id = row[id_idx].strip() if len(row) > id_idx else ""
+                if cell_id:
+                    order_id = cell_id
+                else:
+                    # Column A truly is blank for this row — synthesize an
+                    # ID and immediately write it back into that cell.
+                    # Without this write-back, everything downstream that
+                    # updates the sheet by searching for order_id in column
+                    # A (update_order_status_by_order_id — used when a
+                    # driver accepts/transits/finishes an order) can NEVER
+                    # find this row, since the cell it searches for never
+                    # actually contains "row_N". The status then stays
+                    # stuck on SEND forever even though the bot/DB side
+                    # completed the delivery — this was reported as
+                    # "finish bo'ldi lekin sheetsda o'zgarmayapti".
+                    order_id = f"row_{i}"
+                    ids_to_backfill.append((i, order_id))
                 new_orders.append({
                     'row_index':  i,
                     'order_id':   order_id,
@@ -144,6 +171,20 @@ def get_new_orders(sheet_name=None):
                     'comment':    row[comment_idx] if comment_idx >= 0 and len(row) > comment_idx else "",
                     'sheet_name': target_sheet,
                 })
+
+        if ids_to_backfill:
+            try:
+                def _backfill():
+                    sh = _open_spreadsheet(client)
+                    worksheet = sh.worksheet(target_sheet)
+                    id_col = _col_letter(id_idx + 1)
+                    updates = [{'range': f'{id_col}{r}', 'values': [[oid]]} for r, oid in ids_to_backfill]
+                    worksheet.batch_update(updates)
+                    logger.info(f"[{target_sheet}] Backfilled {len(updates)} blank ID cell(s): {[o for _, o in ids_to_backfill]}")
+                _retry(_backfill)
+            except Exception as e:
+                logger.error(f"[{target_sheet}] Failed to backfill ID cells: {e}")
+
         return new_orders
     except Exception as e:
         logger.error(f"Error get_new_orders (sheet={target_sheet}): {e}")
@@ -188,7 +229,28 @@ def get_order_row(sheet_name: str, row_index: int):
         if status_val.upper() != "SEND":
             return None
 
-        order_id = row[id_idx].strip() if id_idx >= 0 and len(row) > id_idx else f"row_{row_index}"
+        # Same convention/backfill logic as get_new_orders — see that
+        # function's comment for why this matters (otherwise
+        # update_order_status_by_order_id can never find this row again
+        # once the driver accepts/finishes it, and the sheet's status
+        # cell stays stuck on SEND forever).
+        if id_idx < 0:
+            id_idx = 0
+        cell_id = row[id_idx].strip() if len(row) > id_idx else ""
+        if cell_id:
+            order_id = cell_id
+        else:
+            order_id = f"row_{row_index}"
+            try:
+                def _backfill():
+                    sh = _open_spreadsheet(client)
+                    worksheet = sh.worksheet(target_sheet)
+                    worksheet.update_cell(row_index, id_idx + 1, order_id)
+                    logger.info(f"[{target_sheet}] Backfilled blank ID cell at row {row_index}: {order_id}")
+                _retry(_backfill)
+            except Exception as e:
+                logger.error(f"[{target_sheet}] Failed to backfill ID cell at row {row_index}: {e}")
+
         return {
             'row_index':  row_index,
             'order_id':   order_id,
