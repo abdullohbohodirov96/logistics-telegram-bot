@@ -40,6 +40,36 @@ def estimate_minutes_to_shop(lat, lng):
     hours = km / AVG_SPEED_KMH
     return max(1, round(hours * 60))
 
+_MD_SPECIAL_CHARS = ('_', '*', '`', '[')
+
+
+def escape_markdown(value) -> str:
+    """
+    Escape Telegram legacy-Markdown special characters in free-text that
+    came from a human (Google Sheets cell, driver's name, a comment typed
+    by the dispatcher, etc.) before it's interpolated into an f-string
+    that gets sent with parse_mode="Markdown".
+
+    Telegram's legacy Markdown parser errors out the ENTIRE send_message
+    call with "Bad Request: can't parse entities: Can't find end of the
+    entity starting at byte offset N" the moment a value contains an
+    unmatched _ * ` or [ -- e.g. an address like "3*4 metr" or a comment
+    with a stray underscore. That exception was being caught and reported
+    to the dispatcher as a generic "Telegram xatosi" (often misread as
+    "driver blocked the bot"), when the real cause was unescaped
+    punctuation in the sheet data and the driver never received anything.
+    Escaping every dynamic field before formatting prevents the crash
+    without changing how the message looks (Telegram renders "\\*" as a
+    literal asterisk).
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    for ch in _MD_SPECIAL_CHARS:
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 def normalize_car_number(value):
     """
     Normalize a car plate number for reliable matching between the

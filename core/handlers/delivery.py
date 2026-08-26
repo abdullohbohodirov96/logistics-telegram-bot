@@ -16,7 +16,7 @@ from core.sheets import (
 )
 from core.states import DeliveryStates
 import core.keyboards as kb
-from core.utils import get_now, format_duration_detailed, parse_dt, estimate_minutes_to_shop
+from core.utils import get_now, format_duration_detailed, parse_dt, estimate_minutes_to_shop, escape_markdown
 from core.geocoding import reverse_geocode
 
 router = Router()
@@ -739,7 +739,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
         fin_str = parse_dt(fin_at).strftime('%H:%M') if fin_at else '-'
         drv_msg = (
             f"✅ **Buyurtma yakunlandi**\n\n"
-            f"🆔 Buyurtma: #{order_id}\n"
+            f"🆔 Buyurtma: #{escape_markdown(order_id)}\n"
             f"⏰ Boshlandi: {acc_str}\n"
             f"🏁 Tugadi: {fin_str}\n"
             f"⏳ Umumiy vaqt: {d_total}\n\n"
@@ -793,12 +793,12 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                         try: await bot.delete_message(chat_id=target_group, message_id=int(msg_id))
                         except: pass
 
-                    grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{order_id}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
-                                f"👤 **Haydovchi:** {order.get('driver_name', '-')}\n🚘 **Mashina:** {order.get('car_number', '-')}\n"
-                                f"📍 **Manzil:** {order.get('address', '-')}\n{location_line}\n{eta_line}\n📦 **Yuk:** {order.get('cargo', '-')}\n📝 **Izoh:** {order.get('comment', '-')}\n\n"
+                    grp_text = (f"✅ **Buyurtma yakunlandi**\n\n🆔 Buyurtma: #{escape_markdown(order_id)}\n⏰ Boshlandi: {parse_dt(acc_at).strftime('%H:%M') if acc_at else '-'}\n🏁 Tugadi: {parse_dt(fin_at).strftime('%H:%M')}\n⏳ Umumiy vaqt: {d_total}\n\n"
+                                f"👤 **Haydovchi:** {escape_markdown(order.get('driver_name', '-'))}\n🚘 **Mashina:** {escape_markdown(order.get('car_number', '-'))}\n"
+                                f"📍 **Manzil:** {escape_markdown(order.get('address', '-'))}\n{location_line}\n{eta_line}\n📦 **Yuk:** {escape_markdown(order.get('cargo', '-'))}\n📝 **Izoh:** {escape_markdown(order.get('comment', '-'))}\n\n"
                                 f"📋 **Etaplar:**\n"
                                 f"{etaplar_full}\n\n"
-                                f"🟢 **Mashina bo'shadi:** {order.get('car_number', '-')}")
+                                f"🟢 **Mashina bo'shadi:** {escape_markdown(order.get('car_number', '-'))}")
                     
                     media = [
                         InputMediaPhoto(media=order['loaded_photo_file_id'], caption=grp_text, parse_mode="Markdown"),
@@ -815,7 +815,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
                 if ADMIN_IDS:
                     admin_text = (
                         f"✅ **Yuk tushirildi, buyurtma yakunlandi**\n\n"
-                        f"🆔 #{order_id}   🚘 {order.get('car_number', '-')}   👤 {order.get('driver_name', '-')}\n"
+                        f"🆔 #{escape_markdown(order_id)}   🚘 {escape_markdown(order.get('car_number', '-'))}   👤 {escape_markdown(order.get('driver_name', '-'))}\n"
                         f"{location_line}\n"
                         f"{eta_line}"
                     )
@@ -854,7 +854,7 @@ async def handle_final_done(callback: CallbackQuery, state: FSMContext, bot: Bot
 async def handle_wrong_input(message: Message, state: FSMContext):
     curr = await state.get_state()
     data = await state.get_data()
-    order_id = data.get('order_id', '?')
+    order_id = escape_markdown(data.get('order_id', '?'))
     try:
         if curr == DeliveryStates.ON_WAY:
             await message.answer(

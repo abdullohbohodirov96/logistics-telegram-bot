@@ -14,7 +14,7 @@ from core.db import (
     get_active_orders_count, get_driver_sent_orders_count,
 )
 import core.keyboards as kb
-from core.utils import normalize_car_number
+from core.utils import normalize_car_number, escape_markdown
 from core.config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
@@ -69,13 +69,13 @@ async def _notify_admins_tg_failure(bot: Bot, order_id, driver, car_number, tg_e
     instead of only finding out later from the spreadsheet."""
     if not ADMIN_IDS:
         return
-    driver_name = driver.get('driver_name', '-') if driver else '-'
+    driver_name = escape_markdown(driver.get('driver_name', '-') if driver else '-')
     text = (
         f"🚨 *Diqqat! Haydovchiga yuborib bo'lmadi*\n\n"
-        f"🆔 Buyurtma: #{order_id}\n"
-        f"🚗 Mashina: {car_number}\n"
+        f"🆔 Buyurtma: #{escape_markdown(order_id)}\n"
+        f"🚗 Mashina: {escape_markdown(car_number)}\n"
         f"👤 Haydovchi: {driver_name}\n"
-        f"⚠️ Xato: {tg_err}\n\n"
+        f"⚠️ Xato: {escape_markdown(tg_err)}\n\n"
         f"Haydovchi botni bloklagan bo'lishi mumkin — u bilan bog'laning "
         f"yoki buyurtmani boshqa haydovchiga qo'lda biriktiring."
     )
@@ -239,17 +239,28 @@ async def process_one_order(bot: Bot, branch_name: str, sheet_name: str, group_i
             # Do NOT add to PROCESSED_ORDERS — retry next cycle
             return
 
-        # Build driver message — no filial shown
+        # Build driver message — no filial shown.
+        # NOTE: order_id/address/cargo/comment are free text typed by a
+        # human into Google Sheets and can contain raw Markdown special
+        # characters (*, _, `, [) — e.g. "3*4 metr" or "13_may". Sent
+        # unescaped, Telegram's Markdown parser rejects the ENTIRE message
+        # with "can't parse entities", so the driver silently never
+        # receives it. escape_markdown() neutralizes those characters
+        # without changing how the text looks to the driver.
+        safe_order_id = escape_markdown(order_id)
+        safe_address = escape_markdown(order['address'])
+        safe_cargo = escape_markdown(order['cargo'])
+        safe_comment = escape_markdown(order['comment'])
         active_note = (
             f"\n\n⚠️ *Diqqat: sizda allaqachon {active_count} ta aktiv buyurtma bor!*"
             if active_count > 0 else ""
         )
         msg_text = (
             f"🆕 *YANGI BUYURTMA!*\n\n"
-            f"🆔 *ID:* {order_id}\n"
-            f"📍 *Manzil:* {order['address']}\n"
-            f"📦 *Yuk:* {order['cargo']}\n"
-            f"📝 *Izoh:* {order['comment']}"
+            f"🆔 *ID:* {safe_order_id}\n"
+            f"📍 *Manzil:* {safe_address}\n"
+            f"📦 *Yuk:* {safe_cargo}\n"
+            f"📝 *Izoh:* {safe_comment}"
             f"{active_note}"
         )
 
@@ -403,9 +414,10 @@ async def send_driver_reminders(bot: Bot):
             if not _should_send_reminder(order_id, 'unaccepted_1hr', cooldown_hours=3):
                 continue
 
-            driver_name  = order.get('driver_name', '-')
-            car_number   = order.get('car_number', '-')
-            address      = order.get('address', '-')
+            safe_order_id = escape_markdown(order_id)
+            driver_name  = escape_markdown(order.get('driver_name', '-'))
+            car_number   = escape_markdown(order.get('car_number', '-'))
+            address      = escape_markdown(order.get('address', '-'))
             filial       = _ORDER_BRANCH.get(order_id) or order.get('filial', '')
             group_id     = _get_group_id_for_filial(filial)
 
@@ -415,7 +427,7 @@ async def send_driver_reminders(bot: Bot):
                     chat_id=tid,
                     text=(
                         f"⚠️ *Eslatma!*\n\n"
-                        f"📦 #{order_id} buyurtmasi sizga yuborilgan,\n"
+                        f"📦 #{safe_order_id} buyurtmasi sizga yuborilgan,\n"
                         f"lekin hali *QABUL QILINMAGAN*!\n\n"
                         f"📍 Manzil: {address}\n"
                         f"⏰ {int(minutes_since_sent)} daqiqadan beri kutilmoqda.\n\n"
@@ -434,7 +446,7 @@ async def send_driver_reminders(bot: Bot):
                         chat_id=group_id,
                         text=(
                             f"⚠️ *DIQQAT! Buyurtma qabul qilinmayapti!*\n\n"
-                            f"🆔 #{order_id}\n"
+                            f"🆔 #{safe_order_id}\n"
                             f"👤 Haydovchi: {driver_name}\n"
                             f"🚗 Mashina: {car_number}\n"
                             f"📍 Manzil: {address}\n"
@@ -493,9 +505,10 @@ async def send_driver_reminders(bot: Bot):
             minutes_idle = (now - last_dt).total_seconds() / 60
 
             step_label = status_labels.get(status, status)
-            driver_name = order.get('driver_name', '-')
-            car_number  = order.get('car_number', '-')
-            address     = order.get('address', '-')
+            safe_order_id = escape_markdown(order_id)
+            driver_name = escape_markdown(order.get('driver_name', '-'))
+            car_number  = escape_markdown(order.get('car_number', '-'))
+            address     = escape_markdown(order.get('address', '-'))
             filial      = _ORDER_BRANCH.get(order_id) or order.get('filial', '')
             group_id    = _get_group_id_for_filial(filial)
 
@@ -510,7 +523,7 @@ async def send_driver_reminders(bot: Bot):
                         text=(
                             f"🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n\n"
                             f"‼️ *JIDDIY OGOHLANTIRISH!* ‼️\n\n"
-                            f"📦 *#{order_id}* buyurtmasi\n"
+                            f"📦 *#{safe_order_id}* buyurtmasi\n"
                             f"*{hours_idle} SOATDAN KOP VAQT* bajarilmagan!\n\n"
                             f"📋 Joriy qadam: *{step_label}*\n"
                             f"📍 Manzil: {address}\n\n"
@@ -529,7 +542,7 @@ async def send_driver_reminders(bot: Bot):
                             text=(
                                 f"🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n\n"
                                 f"‼️ *JIDDIY OGOHLANTIRISH!* ‼️\n\n"
-                                f"🆔 *#{order_id}* buyurtmasi\n"
+                                f"🆔 *#{safe_order_id}* buyurtmasi\n"
                                 f"*{hours_idle} SOATDAN KOP VAQT* bajarilmagan!\n\n"
                                 f"👤 Haydovchi: *{driver_name}*\n"
                                 f"🚗 Mashina: *{car_number}*\n"
@@ -555,7 +568,7 @@ async def send_driver_reminders(bot: Bot):
                         chat_id=tid,
                         text=(
                             f"⚠️⚠️ *KUCHLI ESLATMA!* ⚠️⚠️\n\n"
-                            f"📦 #{order_id} buyurtmasi\n"
+                            f"📦 #{safe_order_id} buyurtmasi\n"
                             f"*{int(minutes_idle // 60)} soat {int(minutes_idle % 60)} daqiqadan beri* kutilmoqda!\n\n"
                             f"📋 Joriy qadam: *{step_label}*\n"
                             f"📍 Manzil: {address}\n\n"
@@ -579,7 +592,7 @@ async def send_driver_reminders(bot: Bot):
                         chat_id=tid,
                         text=(
                             f"⏰ *Eslatma!*\n\n"
-                            f"📦 Buyurtma: #{order_id}\n"
+                            f"📦 Buyurtma: #{safe_order_id}\n"
                             f"📋 Joriy qadam: {step_label}\n"
                             f"⌛ {int(minutes_idle)} daqiqadan beri harakat yo'q.\n\n"
                             f"Iltimos, keyingi qadamni bajaring yoki /start bosing."
@@ -681,7 +694,7 @@ async def send_daily_report_job(bot: Bot):
                     else:
                         avg_str = "—"
                     medal = medals[i] if i < 3 else f"{i+1}."
-                    lines.append(f"{medal} *{s['car']}* — {s['name']} — {count} reys | avg: {avg_str}")
+                    lines.append(f"{medal} *{escape_markdown(s['car'])}* — {escape_markdown(s['name'])} — {count} reys | avg: {avg_str}")
             else:
                 lines.append("📉 Bugun yakunlangan reys yo'q.")
 
@@ -692,8 +705,8 @@ async def send_daily_report_job(bot: Bot):
                     acc_dt = parse_dt(acc) if acc else None
                     elapsed = int((now - acc_dt).total_seconds() / 60) if acc_dt else 0
                     lines.append(
-                        f"🔴 {o.get('car_number','-')} — {o.get('driver_name','-')} "
-                        f"| #{o.get('order_id','-')} | {elapsed} daqiqa"
+                        f"🔴 {escape_markdown(o.get('car_number','-'))} — {escape_markdown(o.get('driver_name','-'))} "
+                        f"| #{escape_markdown(o.get('order_id','-'))} | {elapsed} daqiqa"
                     )
 
             try:

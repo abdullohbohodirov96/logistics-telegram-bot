@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from core.config import ADMIN_IDS
 from core.db import get_active_orders_by_driver
 import core.keyboards as kb
+from core.utils import escape_markdown
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -133,8 +134,17 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
     # ── Step 4: Set FSM state for target order ──
     await state.update_data(order_id=order_id, stage_history=stage_history)
 
-    addr = order.get("address", "-")
-    cargo = order.get("cargo", "-")
+    # address/cargo/order_id are free text from Google Sheets and can contain
+    # raw Markdown special chars (*, _, `, [), which crashes every
+    # parse_mode="Markdown" send below with "can't parse entities" — see
+    # core/utils.py::escape_markdown for the full explanation. IMPORTANT:
+    # keep the raw order_id (used below for callback_data / DB lookups via
+    # kb.get_block_menu_kb, kb.get_transit_kb, step_way_/final_done_ etc.)
+    # and only use the escaped copy for display text, otherwise button taps
+    # would carry a mangled ID that no longer matches the DB/sheet row.
+    oid = escape_markdown(order_id)
+    addr = escape_markdown(order.get("address", "-"))
+    cargo = escape_markdown(order.get("cargo", "-"))
 
     # ── Step 5: Route to correct step based on DB status ──
     if not order.get("loaded_photo_file_id"):
@@ -150,7 +160,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
                 if item: return f"{item.get('emoji','✅')} {item.get('status','')} ({item.get('completed_at','')})"
                 return "⏳ Tanlanmagan"
             await callback.message.answer(
-                f"📦 **Buyurtma #{order_id}**\n"
+                f"📦 **Buyurtma #{oid}**\n"
                 f"📍 {addr} | 📦 {cargo}\n\n"
                 f"📦 **Bloklardan yuk olish**\n"
                 f"⚠️ Hamma bloklarni tanlashingiz kerak!\n\n"
@@ -171,7 +181,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
         ):
             await state.set_state(DeliveryStates.TRANSIT)
             await callback.message.answer(
-                f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+                f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
                 f"🚚 Transitdan yuk oldingizmi?\n"
                 f"🚚 Транзитдан юк олдингизми?",
                 reply_markup=kb.get_transit_kb(order_id),
@@ -182,7 +192,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
         # Transit answered but no photo yet
         await state.set_state(DeliveryStates.LOADED_PHOTO)
         await callback.message.answer(
-            f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+            f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
             f"📸 Yuk ortilgan rasmni yuboring\n"
             f"📸 Юк ортилган расмни юборинг",
             parse_mode="Markdown"
@@ -192,7 +202,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
     if not order.get("on_way_at"):
         await state.set_state(DeliveryStates.ON_WAY)
         await callback.message.answer(
-            f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+            f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
             f"🚚 Yo'lga chiqdingizmi?\n"
             f"🚚 Йo'лга чиқдингизми?",
             reply_markup=kb.get_step_kb("🚚 Yo'lga chiqdim", f"step_way_{order_id}"),
@@ -203,7 +213,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
     if not order.get("act_photo_file_id"):
         await state.set_state(DeliveryStates.ACT_PHOTO)
         await callback.message.answer(
-            f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+            f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
             f"📄 Akt rasmini yuboring\n"
             f"📄 Акт расмини юборинг",
             parse_mode="Markdown"
@@ -213,7 +223,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
     if not order.get("delivered_location_at"):
         await state.set_state(DeliveryStates.DELIVERED_LOC)
         await callback.message.answer(
-            f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+            f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
             f"📍 Lokatsiyani yuboring\n"
             f"📍 Локацияни юборинг",
             reply_markup=kb.get_location_kb("📍 Lokatsiyani yuborish"),
@@ -224,7 +234,7 @@ async def open_active_order(callback: CallbackQuery, state: FSMContext, bot: Bot
     # All steps done — waiting finish
     await state.set_state(DeliveryStates.WAITING_FINISH)
     await callback.message.answer(
-        f"📦 **Buyurtma #{order_id}**\n📍 {addr}\n\n"
+        f"📦 **Buyurtma #{oid}**\n📍 {addr}\n\n"
         f"✅ Buyurtmani yakunlash uchun tugmani bosing:",
         reply_markup=kb.get_step_kb("✅ Buyurtmani yakunlash", f"final_done_{order_id}"),
         parse_mode="Markdown"
